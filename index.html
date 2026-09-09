@@ -3570,7 +3570,13 @@ fbDb.ref('.info/connected').on('value', function(snap){
 
 firebase.auth().signInAnonymously().catch(function(err){
   console.error('Firebase auth failed:', err);
-  setSyncIndicator('🔴 تعذر الدخول للسيرفر — يعمل محليًا فقط', '#e2a4a4');
+  var msg = '🔴 تعذر تسجيل الدخول للسيرفر: ' + (err.code || err.message || 'خطأ غير معروف');
+  if(err.code === 'auth/admin-restricted-operation' || err.code === 'auth/operation-not-allowed'){
+    msg = '🔴 الدخول المجهول (Anonymous) غير مفعّل في Firebase';
+  } else if(err.code === 'auth/network-request-failed'){
+    msg = '🔴 لا يوجد اتصال بالإنترنت أو محجوب';
+  }
+  setSyncIndicator(msg, '#e2a4a4');
 });
 
 fbDataRef.on('value', function(snapshot){
@@ -3594,7 +3600,11 @@ fbDataRef.on('value', function(snapshot){
   fbApplyingRemote = false;
 }, function(err){
   console.error('Firebase read failed:', err);
-  setSyncIndicator('🔴 تعذر الاتصال بالسيرفر — يعمل محليًا فقط', '#e2a4a4');
+  var msg = '🔴 تعذر القراءة من السيرفر: ' + (err.code || err.message || 'خطأ غير معروف');
+  if(err.code === 'PERMISSION_DENIED'){
+    msg = '🔴 القراءة/الكتابة مرفوضة — راجع Rules في Firebase';
+  }
+  setSyncIndicator(msg, '#e2a4a4');
 });
 
 var _origSaveStateForSync = saveState;
