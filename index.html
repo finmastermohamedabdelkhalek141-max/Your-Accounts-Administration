@@ -3473,15 +3473,22 @@ async function kioskHandleMatch(empId){
   }
   kioskSetStatus('جارِ حفظ البيانات على السيرفر...', '', 'من فضلك سيب الصفحة مفتوحة شوية');
   var minDelay = new Promise(function(r){ setTimeout(r, 1200); });
-  var syncPromise = kioskForceSyncAndWait(9000);
+  var syncPromise = kioskForceSyncAndWait(20000);
   var results = await Promise.all([minDelay, syncPromise]);
-  var synced = results[1];
+  var sync = results[1];
   stopKioskMode();
-  if(synced){
+  if(sync.ok){
     kioskSetStatus('تم بنجاح ✓', 'ok', 'وصل الحفظ للسيرفر — تقدر تقفل الصفحة دلوقتي');
     window.close();
   } else {
-    kioskSetStatus('تم الحفظ على الجهاز فقط ⚠️', 'warn', 'تعذر التأكد من وصول البيانات للسيرفر — تأكد إن النت شغّال، ولا تقفل الصفحة قبل ما ترجع تفتحها بنت أحسن وتشوف إشعار "تم بنجاح"');
+    var reasonMap = {
+      timeout: 'استغرقت المزامنة وقتًا أطول من اللازم — الأرجح إن سرعة النت ضعيفة جدًا حاليًا',
+      PERMISSION_DENIED: 'الصلاحيات مرفوضة من Firebase — راجع Rules في لوحة تحكم Firebase',
+      'auth/network-request-failed': 'لا يوجد اتصال بالإنترنت أو محجوب',
+      'auth/admin-restricted-operation': 'الدخول المجهول (Anonymous Auth) غير مفعّل في Firebase'
+    };
+    var reasonText = reasonMap[sync.reason] || ('السبب: ' + sync.reason);
+    kioskSetStatus('تم الحفظ على الجهاز فقط ⚠️', 'warn', 'تعذر التأكد من وصول البيانات للسيرفر — ' + reasonText + ' — لا تقفل الصفحة قبل ما ترجع تفتحها وتشوف إشعار "تم بنجاح"');
   }
 }
 
@@ -3682,15 +3689,15 @@ fbDataRef.on('value', function(snapshot){
 function kioskForceSyncAndWait(maxMs){
   return new Promise(function(resolve){
     var settled = false;
-    var to = setTimeout(function(){ if(!settled){ settled = true; resolve(false); } }, maxMs);
+    var to = setTimeout(function(){ if(!settled){ settled = true; resolve({ok:false, reason:'timeout'}); } }, maxMs);
     try{
       fbDataRef.set(STATE).then(function(){
-        if(!settled){ settled = true; clearTimeout(to); resolve(true); }
-      }).catch(function(){
-        if(!settled){ settled = true; clearTimeout(to); resolve(false); }
+        if(!settled){ settled = true; clearTimeout(to); resolve({ok:true}); }
+      }).catch(function(err){
+        if(!settled){ settled = true; clearTimeout(to); resolve({ok:false, reason:(err && (err.code||err.message))||'unknown'}); }
       });
     }catch(e){
-      if(!settled){ settled = true; clearTimeout(to); resolve(false); }
+      if(!settled){ settled = true; clearTimeout(to); resolve({ok:false, reason:(e && e.message)||'unknown'}); }
     }
   });
 }
