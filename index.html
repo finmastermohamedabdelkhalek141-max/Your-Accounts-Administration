@@ -3222,7 +3222,7 @@ function renderAll(){
 
 /* ===================== KIOSK MODE (standalone, no login) ===================== */
 var FACEAPI_LIB_URL = null; /* المكتبة تُحمَّل من CDN عبر وسم <script> في <head> الصفحة، لا حاجة لتحميلها مرة أخرى هنا */
-var FACEAPI_MODEL_URL = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
+var FACEAPI_MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
 var kioskState = { running:false, clockTimer:null, loopTimer:null, stream:null, matcher:null, lastPunch:{} };
 
 function isKioskHash(){ return (location.hash||'').replace('#','').replace('/','') === 'kiosk'; }
