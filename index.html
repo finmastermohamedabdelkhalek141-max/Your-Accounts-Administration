@@ -3271,9 +3271,26 @@ function nextPunchStage(empId){
   if(!rec.checkOut) return 'checkOut';
   return 'done';
 }
+/* أقل عدد دقايق مسموح بيه بين أي بصمتين متتاليتين لنفس الموظف (منعًا لتسجيل كل مراحل اليوم دفعة واحدة خلال ثواني) */
+var MIN_STAGE_GAP_MINUTES = 5;
+function hmToMinutes(hm){ if(!hm) return null; var p = String(hm).split(':'); var h = parseInt(p[0],10), m = parseInt(p[1],10); if(isNaN(h)||isNaN(m)) return null; return h*60+m; }
 function recordKioskPunch(empId){
   var stage = nextPunchStage(empId);
   if(stage==='done') return {stage:'done'};
+  var stageOrder = ['checkIn','breakOut','breakIn','checkOut'];
+  var idx = stageOrder.indexOf(stage);
+  var todayRec = STATE.attendance.find(function(a){ return a.empId===empId && a.date===todayISO(); });
+  if(idx>0 && todayRec){
+    var prevTime = todayRec[stageOrder[idx-1]];
+    var prevMin = hmToMinutes(prevTime);
+    var nowMin = hmToMinutes(nowHM());
+    if(prevMin!=null && nowMin!=null){
+      var diff = nowMin - prevMin;
+      if(diff>=0 && diff < MIN_STAGE_GAP_MINUTES){
+        return {stage:'tooSoon', waitMinutes: (MIN_STAGE_GAP_MINUTES - diff), nextLabel: PUNCH_LABELS[stage]};
+      }
+    }
+  }
   var rec = findOrCreateAttendance(empId, todayISO());
   rec[stage] = nowHM();
   rec.notes = rec.notes ? rec.notes : 'تسجيل عبر كشك البصمة';
@@ -3447,15 +3464,25 @@ async function kioskHandleMatch(empId){
   var res = recordKioskPunch(empId);
   if(res.stage==='done'){
     kioskSetResult('<div class="kiosk-result-name">'+esc(emp.name)+'</div><div class="kiosk-result-stage">تم تسجيل كل بصماتك اليوم بالفعل ✓</div>');
+  } else if(res.stage==='tooSoon'){
+    kioskSetResult('<div class="kiosk-result-name">'+esc(emp.name)+'</div><div class="kiosk-result-stage">لسه بدري — استنى حوالي '+res.waitMinutes+' دقيقة قبل تسجيل «'+res.nextLabel+'»</div>');
+    toast('لسه بدري — استنى '+res.waitMinutes+' دقيقة قبل تسجيل '+res.nextLabel,'warn');
   } else {
     kioskSetResult('<div class="kiosk-result-name">'+esc(emp.name)+'</div><div class="kiosk-result-stage">تم: '+PUNCH_LABELS[res.stage]+' — الساعة '+res.time+' ✓</div>');
     toast('تم تسجيل '+PUNCH_LABELS[res.stage]+' بنجاح — '+emp.name+' — الساعة '+res.time);
   }
-  kioskSetStatus('تم التعرف عليك', 'ok', '');
-  setTimeout(function(){
-    kioskSetResult('');
-    kioskSetStatus('قف أمام الكاميرا وانتظر التعرف عليك', 'ok', '');
-  }, 4000);
+  kioskSetStatus('جارِ حفظ البيانات على السيرفر...', '', 'من فضلك سيب الصفحة مفتوحة شوية');
+  var minDelay = new Promise(function(r){ setTimeout(r, 1200); });
+  var syncPromise = kioskForceSyncAndWait(9000);
+  var results = await Promise.all([minDelay, syncPromise]);
+  var synced = results[1];
+  stopKioskMode();
+  if(synced){
+    kioskSetStatus('تم بنجاح ✓', 'ok', 'وصل الحفظ للسيرفر — تقدر تقفل الصفحة دلوقتي');
+    window.close();
+  } else {
+    kioskSetStatus('تم الحفظ على الجهاز فقط ⚠️', 'warn', 'تعذر التأكد من وصول البيانات للسيرفر — تأكد إن النت شغّال، ولا تقفل الصفحة قبل ما ترجع تفتحها بنت أحسن وتشوف إشعار "تم بنجاح"');
+  }
 }
 
 /* ===================== INIT ===================== */
@@ -3649,6 +3676,24 @@ fbDataRef.on('value', function(snapshot){
   }
   setSyncIndicator(msg, '#e2a4a4');
 });
+
+/* دالة خاصة بكشك البصمة: ترفع البيانات لسيرفر Firebase فورًا (من غير انتظار الـ debounce العادي)
+   وتنتظر تأكيد وصولها بنجاح، بحد أقصى maxMs. بترجع true لو اتأكد الحفظ، أو false لو فشل/استغرق وقت أطول. */
+function kioskForceSyncAndWait(maxMs){
+  return new Promise(function(resolve){
+    var settled = false;
+    var to = setTimeout(function(){ if(!settled){ settled = true; resolve(false); } }, maxMs);
+    try{
+      fbDataRef.set(STATE).then(function(){
+        if(!settled){ settled = true; clearTimeout(to); resolve(true); }
+      }).catch(function(){
+        if(!settled){ settled = true; clearTimeout(to); resolve(false); }
+      });
+    }catch(e){
+      if(!settled){ settled = true; clearTimeout(to); resolve(false); }
+    }
+  });
+}
 
 var _origSaveStateForSync = saveState;
 saveState = function(){
