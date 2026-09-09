@@ -3375,7 +3375,7 @@ function getKioskPositionFast(){
 }
 
 async function kioskInitRecognition(){
-  kioskSetStatus('جارٍ تجهيز نظام التعرف على الوجه...', '', 'يعمل بالكامل من داخل الجهاز، بدون إنترنت');
+  kioskSetStatus('جارٍ تجهيز نظام التعرف على الوجه...', '', 'أول مرة يحتاج إنترنت لتحميل نظام التعرف (حوالي 7 ميجا)، وبعد كده هيتخزن على الجهاز ويشتغل بسرعة من غير تحميل تاني');
   if(typeof DecompressionStream === 'undefined'){
     kioskSetStatus('تعذر تجهيز نظام التعرف على الوجه', 'bad', 'المتصفح المستخدم قديم ولا يدعم فك الضغط اللازم لتشغيل الكشك (شائع داخل متصفح واتساب/فيسبوك المدمج) — افتح الرابط في متصفح Chrome أو Safari مباشرة بدل الضغط عليه داخل الشات');
     kioskSetRetry('<button class="kiosk-retry-btn" onclick="startKioskMode()">إعادة المحاولة</button>');
@@ -3383,13 +3383,19 @@ async function kioskInitRecognition(){
   }
   try{
     if(FACEAPI_LIB_URL){ await loadScriptOnce(FACEAPI_LIB_URL); } /* لن يُنفَّذ عمليًا لأن المكتبة مضمّنة أصلاً */
-    await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(FACEAPI_MODEL_URL),
-      faceapi.nets.faceLandmark68Net.loadFromUri(FACEAPI_MODEL_URL),
-      faceapi.nets.faceRecognitionNet.loadFromUri(FACEAPI_MODEL_URL)
+    var _modelsTimeout = new Promise(function(_, reject){
+      setTimeout(function(){ reject(new Error('استغرق تحميل نظام التعرف وقتًا طويلًا جدًا (أكثر من دقيقتين) — الاتصال بالإنترنت بطيء جدًا أو غير متاح')); }, 120000);
+    });
+    await Promise.race([
+      Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(FACEAPI_MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(FACEAPI_MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(FACEAPI_MODEL_URL)
+      ]),
+      _modelsTimeout
     ]);
   }catch(err){
-    kioskSetStatus('تعذر تجهيز نظام التعرف على الوجه', 'bad', 'تفاصيل الخطأ: '+((err && err.message) || 'غير معروف')+' — حاول تحديث الصفحة، وإن استمرت المشكلة افتح الرابط في متصفح Chrome بدل المتصفح المدمج داخل واتساب');
+    kioskSetStatus('تعذر تجهيز نظام التعرف على الوجه', 'bad', 'تفاصيل الخطأ: '+((err && err.message) || 'غير معروف')+' — تأكد إن الإنترنت شغّال وسريع نسبيًا (أول مرة محتاج يحمّل حوالي 7 ميجا)، وحاول تحديث الصفحة. لو استمرت المشكلة افتح الرابط في متصفح Chrome بدل المتصفح المدمج داخل واتساب');
     kioskSetRetry('<button class="kiosk-retry-btn" onclick="startKioskMode()">إعادة المحاولة</button>');
     return;
   }
@@ -3443,6 +3449,7 @@ async function kioskHandleMatch(empId){
     kioskSetResult('<div class="kiosk-result-name">'+esc(emp.name)+'</div><div class="kiosk-result-stage">تم تسجيل كل بصماتك اليوم بالفعل ✓</div>');
   } else {
     kioskSetResult('<div class="kiosk-result-name">'+esc(emp.name)+'</div><div class="kiosk-result-stage">تم: '+PUNCH_LABELS[res.stage]+' — الساعة '+res.time+' ✓</div>');
+    toast('تم تسجيل '+PUNCH_LABELS[res.stage]+' بنجاح — '+emp.name+' — الساعة '+res.time);
   }
   kioskSetStatus('تم التعرف عليك', 'ok', '');
   setTimeout(function(){
