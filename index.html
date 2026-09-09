@@ -3383,7 +3383,8 @@ async function startKioskMode(){
     kioskSetStatus('جهازك لا يدعم تحديد الموقع', 'bad', '');
     return;
   }
-  navigator.geolocation.getCurrentPosition(async function(pos){
+  try{
+    var pos = await getKioskPositionFast();
     var dist = haversineMeters(pos.coords.latitude, pos.coords.longitude, k.lat, k.lng);
     if(dist > k.radius){
       kioskSetStatus('أنت خارج نطاق المكتب', 'bad', 'المسافة الحالية عن المكتب: تقريبًا '+Math.round(dist)+' متر (المسموح '+k.radius+' متر)');
@@ -3394,14 +3395,41 @@ async function startKioskMode(){
     kioskSetRangeBadge('<span class="kiosk-badge-range in">داخل نطاق المكتب ✓</span>');
     kioskSetRetry('');
     await kioskInitRecognition();
-  }, function(err){
-    kioskSetStatus('تعذر تحديد موقعك', 'bad', err.message || 'يرجى السماح للمتصفح بالوصول إلى الموقع الجغرافي');
+  }catch(err){
+    kioskSetStatus('تعذر تحديد موقعك', 'bad', (err && err.message) || 'يرجى السماح للمتصفح بالوصول إلى الموقع الجغرافي');
     kioskSetRetry('<button class="kiosk-retry-btn" onclick="startKioskMode()">إعادة المحاولة</button>');
-  }, {enableHighAccuracy:true, timeout:20000});
+  }
+}
+
+/* تحديد الموقع بأسرع طريقة ممكنة: نجرب أولًا موقع مخزّن حديثًا (فوري)،
+   ثم دقة عالية لفترة قصيرة، وإن تأخرت أو فشلت ننتقل لدقة أقل (أسرع عادةً عبر الشبكة)
+   بدل الانتظار حتى 20 ثانية كما كان سابقًا */
+function getKioskPositionFast(){
+  return new Promise(function(resolve, reject){
+    var settled = false;
+    function tryLowAccuracy(){
+      navigator.geolocation.getCurrentPosition(function(pos){
+        if(settled) return; settled = true; resolve(pos);
+      }, function(err){
+        if(settled) return; settled = true; reject(err);
+      }, {enableHighAccuracy:false, timeout:10000, maximumAge:30000});
+    }
+    navigator.geolocation.getCurrentPosition(function(pos){
+      if(settled) return; settled = true; resolve(pos);
+    }, function(){
+      if(settled) return;
+      tryLowAccuracy();
+    }, {enableHighAccuracy:true, timeout:7000, maximumAge:15000});
+  });
 }
 
 async function kioskInitRecognition(){
   kioskSetStatus('جارٍ تجهيز نظام التعرف على الوجه...', '', 'يعمل بالكامل من داخل الجهاز، بدون إنترنت');
+  if(typeof DecompressionStream === 'undefined'){
+    kioskSetStatus('تعذر تجهيز نظام التعرف على الوجه', 'bad', 'المتصفح المستخدم قديم ولا يدعم فك الضغط اللازم لتشغيل الكشك (شائع داخل متصفح واتساب/فيسبوك المدمج) — افتح الرابط في متصفح Chrome أو Safari مباشرة بدل الضغط عليه داخل الشات');
+    kioskSetRetry('<button class="kiosk-retry-btn" onclick="startKioskMode()">إعادة المحاولة</button>');
+    return;
+  }
   try{
     if(FACEAPI_LIB_URL){ await loadScriptOnce(FACEAPI_LIB_URL); } /* لن يُنفَّذ عمليًا لأن المكتبة مضمّنة أصلاً */
     await Promise.all([
@@ -3410,7 +3438,7 @@ async function kioskInitRecognition(){
       faceapi.nets.faceRecognitionNet.loadFromUri(FACEAPI_MODEL_URL)
     ]);
   }catch(err){
-    kioskSetStatus('تعذر تجهيز نظام التعرف على الوجه', 'bad', 'حاول تحديث الصفحة والمحاولة تاني');
+    kioskSetStatus('تعذر تجهيز نظام التعرف على الوجه', 'bad', 'تفاصيل الخطأ: '+((err && err.message) || 'غير معروف')+' — حاول تحديث الصفحة، وإن استمرت المشكلة افتح الرابط في متصفح Chrome بدل المتصفح المدمج داخل واتساب');
     kioskSetRetry('<button class="kiosk-retry-btn" onclick="startKioskMode()">إعادة المحاولة</button>');
     return;
   }
