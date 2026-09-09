@@ -3111,7 +3111,7 @@ function reportStyleBlock(){
 }
 function reportHead(title, count){
   var now = new Date();
-  var dateStr = now.toLocaleDateString('ar-EG') + ' — ' + now.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+  var dateStr = now.toLocaleDateString('ar-EG') + ' — ' + now.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit',hour12:false});
   return '<div class="rpt-head"><div class="rpt-brand">شركة بن أرحب للتطوير العقاري<small>إدارة حسابات الموردين والعُهد وشؤون الموظفين</small></div></div>'+
     '<div class="rpt-title">'+esc(title)+'</div>'+
     '<div class="rpt-meta">تاريخ الإصدار: '+dateStr+(count!==undefined?(' &nbsp;|&nbsp; عدد السجلات: '+count):'')+'</div>';
@@ -3337,7 +3337,7 @@ async function startKioskMode(){
 
   kioskState.clockTimer = setInterval(function(){
     var el = document.getElementById('kiosk-clock');
-    if(el) el.textContent = new Date().toLocaleString('ar-EG', {weekday:'long', hour:'2-digit', minute:'2-digit', day:'numeric', month:'numeric'});
+    if(el) el.textContent = new Date().toLocaleString('ar-EG', {weekday:'long', hour:'2-digit', minute:'2-digit', day:'numeric', month:'numeric', hour12:false});
   }, 1000);
 
   var k = STATE.settings && STATE.settings.kiosk;
