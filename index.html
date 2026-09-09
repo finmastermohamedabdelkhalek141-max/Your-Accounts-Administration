@@ -233,6 +233,16 @@ tbody tr:last-child td { border-bottom: none; }
 .kiosk-badge-range.out { background: rgba(255,157,138,.15); color: #ff9d8a; }
 .kiosk-retry-btn { margin-top: 16px; background: var(--gold); color: #3a2a08; border: none; padding: 10px 22px; border-radius: 8px; font-weight: 700; font-size: 14.5px; }
 .kiosk-back-link { margin-top: 26px; color: #7d9184; font-size: 13px; text-decoration: underline; cursor: pointer; }
+/* بطاقة تأكيد الهوية قبل تسجيل البصمة فعليًا (لمنع خلط موظف بموظف آخر يشبهه) */
+.kiosk-confirm-card { margin-top: 16px; padding: 18px 16px; border-radius: 12px; background: rgba(255,255,255,.06); border: 1.5px solid var(--gold); }
+.kiosk-confirm-photo { width: 74px; height: 74px; border-radius: 50%; object-fit: cover; border: 3px solid var(--gold); margin: 0 auto 10px; display: block; background: #0d1712; }
+.kiosk-confirm-q { font-size: 15.5px; color: #cfd9d2; margin-bottom: 4px; }
+.kiosk-confirm-name { font-size: 23px; font-weight: 900; color: #ffd977; margin-bottom: 14px; }
+.kiosk-confirm-btns { display: flex; gap: 10px; }
+.kiosk-confirm-btns button { flex: 1 1 0; padding: 12px 8px; border-radius: 9px; border: none; font-weight: 700; font-size: 14.5px; }
+.kiosk-confirm-yes { background: #3f8f66; color: #fff; }
+.kiosk-confirm-no { background: rgba(255,157,138,.15); color: #ff9d8a; border: 1.5px solid rgba(255,157,138,.4) !important; }
+.kiosk-confirm-timer { margin-top: 10px; font-size: 12.5px; color: #a9bdb1; }
 
 /* ===================== تنسيق موحّد لكل شاشات التقارير ===================== */
 /* تقرير الأصناف / تقرير الحضور والرواتب / ضريبة القيمة المضافة:
@@ -685,6 +695,9 @@ table.rpt-table th { font-weight: 700 !important; }
                 <option value="0.5" selected>متوسطة (موصى بها)</option>
                 <option value="0.6">متساهلة (أسهل بس احتمال خطأ أكبر)</option>
               </select>
+              <div class="hint" style="margin-top:8px;">
+                لو عندك موظفين شكلهم متقارب (زي إخوة أو أقارب) اختار «دقة عالية» — وبقى كمان بعد التعرف الأول يظهر للموظف اسمه وصورته ويتأكد بنفسه إنه هو قبل ما تتسجل البصمة فعليًا، فحتى لو النظام خمّن غلط الموظف يقدر يلغيها بضغطة «لا، مش أنا».
+              </div>
             </div>
             <div class="divider"></div>
             <button class="btn btn-primary" style="width:auto" onclick="saveKioskSettings()">حفظ الإعدادات</button>
@@ -998,6 +1011,7 @@ function renderPlaceholder(id, label){
 function todayISO(){ var d=new Date(); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
 function nowHM(){ var d=new Date(); return pad(d.getHours())+':'+pad(d.getMinutes()); }
 function pad(n){ return n<10?'0'+n:''+n; }
+function hour12(d){ var h = d.getHours()%12; if(h===0) h=12; return pad(h); }
 function formatDate(iso){ if(!iso) return '—'; var p=iso.split('-'); if(p.length!==3) return iso; return p[2]+'/'+p[1]+'/'+p[0]; }
 function daysUntil(iso){ if(!iso) return null; var t=new Date(iso+'T00:00:00'); var today=new Date(); today.setHours(0,0,0,0); return Math.round((t-today)/86400000); }
 function addYearsISO(iso, years){ if(!iso) return ''; var d=new Date(iso+'T00:00:00'); d.setFullYear(d.getFullYear()+(parseFloat(years)||0)); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
@@ -3111,7 +3125,7 @@ function reportStyleBlock(){
 }
 function reportHead(title, count){
   var now = new Date();
-  var dateStr = now.toLocaleDateString('ar-EG') + ' — ' + now.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit',hour12:false});
+  var dateStr = now.toLocaleDateString('ar-EG') + ' — ' + hour12(now)+':'+pad(now.getMinutes());
   return '<div class="rpt-head"><div class="rpt-brand">شركة بن أرحب للتطوير العقاري<small>إدارة حسابات الموردين والعُهد وشؤون الموظفين</small></div></div>'+
     '<div class="rpt-title">'+esc(title)+'</div>'+
     '<div class="rpt-meta">تاريخ الإصدار: '+dateStr+(count!==undefined?(' &nbsp;|&nbsp; عدد السجلات: '+count):'')+'</div>';
@@ -3223,7 +3237,16 @@ function renderAll(){
 /* ===================== KIOSK MODE (standalone, no login) ===================== */
 var FACEAPI_LIB_URL = null; /* المكتبة تُحمَّل من CDN عبر وسم <script> في <head> الصفحة، لا حاجة لتحميلها مرة أخرى هنا */
 var FACEAPI_MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights';
-var kioskState = { running:false, clockTimer:null, loopTimer:null, stream:null, matcher:null, lastPunch:{} };
+var kioskState = { running:false, clockTimer:null, loopTimer:null, stream:null, matcher:null, lastPunch:{}, streakLabel:null, streakCount:0, awaitingConfirm:false, confirmTimer:null };
+/* عدد مرات التعرف المتتالية على نفس الشخص (كل مرة كل 1.2 ثانية) قبل ما نعرض شاشة "هل هذا أنت؟" —
+   بيمنع إن لقطة كاميرا واحدة غلط (إضاءة/زاوية) تسجّل حضور شخص خطأ */
+var KIOSK_REQUIRED_STREAK = 3;
+/* أقل فرق مسموح بين أقرب موظف وثاني أقرب موظف من حيث "درجة الشبه" بالوجه — لو الفرق أقل من كده
+   يبقى في احتمال حقيقي إن فيه موظفين شكلهم قريب من بعض، فمانرفضش نتجاهل النتيجة ونستنى تكرار أوضح
+   بدل ما نخاطر ونخلط بين الاتنين */
+var KIOSK_MIN_MARGIN = 0.07;
+/* مهلة انتظار تأكيد الموظف لهويته قبل ما نلغي المحاولة ونرجع نمسح تاني */
+var KIOSK_CONFIRM_TIMEOUT_MS = 12000;
 
 function isKioskHash(){ return (location.hash||'').replace('#','').replace('/','') === 'kiosk'; }
 
@@ -3318,6 +3341,29 @@ function buildFaceMatcher(threshold){
   return new faceapi.FaceMatcher(labeled, threshold);
 }
 
+/* بنحسب المسافة يدويًا لكل الموظفين (مش بس أقرب واحد) عشان نقدر نقارن أقرب واحد بثاني أقرب واحد.
+   ده اللي بيخلينا نكتشف حالة "موظفين شكلهم شبه بعض" (زي اللي حصل بين أحمد وحمزة) بدل ما نثق
+   بأول تخمين لمجرد إنه تحت حد الـ threshold. */
+function kioskRankMatches(descriptor){
+  var withDesc = STATE.employees.filter(function(e){ return e.faceDescriptor && e.faceDescriptor.length; });
+  var ranked = withDesc.map(function(e){
+    return { id: e.id, dist: faceapi.euclideanDistance(descriptor, new Float32Array(e.faceDescriptor)) };
+  });
+  ranked.sort(function(a,b){ return a.dist - b.dist; });
+  return ranked;
+}
+
+/* نتيجة موثوقة = أقرب موظف تحت حد الحساسية، وفي نفس الوقت فرق واضح (KIOSK_MIN_MARGIN) عن
+   ثاني أقرب موظف. لو الفرق ضئيل بين اتنين، نعتبرها نتيجة "مش أكيدة" ونتجاهلها بدل ما نخاطر. */
+function kioskConfidentMatch(descriptor, threshold){
+  var ranked = kioskRankMatches(descriptor);
+  if(!ranked.length) return null;
+  var best = ranked[0], second = ranked[1];
+  if(best.dist >= threshold) return null;
+  if(second && (second.dist - best.dist) < KIOSK_MIN_MARGIN) return null;
+  return best.id;
+}
+
 function stopKioskMode(){
   kioskState.running = false;
   if(kioskState.clockTimer){ clearInterval(kioskState.clockTimer); kioskState.clockTimer = null; }
@@ -3337,7 +3383,12 @@ async function startKioskMode(){
 
   kioskState.clockTimer = setInterval(function(){
     var el = document.getElementById('kiosk-clock');
-    if(el) el.textContent = new Date().toLocaleString('ar-EG', {weekday:'long', hour:'2-digit', minute:'2-digit', day:'numeric', month:'numeric', hour12:false});
+    if(el){
+      var _n = new Date();
+      var _wd = _n.toLocaleDateString('ar-EG', {weekday:'long'});
+      var _dm = _n.toLocaleDateString('ar-EG', {day:'numeric', month:'numeric'});
+      el.textContent = _wd + '، ' + hour12(_n)+':'+pad(_n.getMinutes()) + '، ' + _dm;
+    }
   }, 1000);
 
   var k = STATE.settings && STATE.settings.kiosk;
@@ -3418,7 +3469,10 @@ async function kioskInitRecognition(){
   }
 
   await ensureEmployeeDescriptors();
-  kioskState.matcher = buildFaceMatcher((STATE.settings.kiosk.threshold)||0.5);
+  var _threshold = (STATE.settings.kiosk.threshold)||0.5;
+  kioskState.matcher = buildFaceMatcher(_threshold);
+  kioskState.threshold = _threshold;
+  kioskState.streakLabel = null; kioskState.streakCount = 0; kioskState.awaitingConfirm = false;
   if(!kioskState.matcher){
     kioskSetStatus('لا يوجد موظفون جاهزون للتعرف عليهم', 'bad', 'يجب رفع صورة واضحة لكل موظف من شاشة «بيانات الموظفين»');
     return;
@@ -3439,23 +3493,87 @@ async function kioskInitRecognition(){
   kioskSetStatus('قف أمام الكاميرا وانتظر التعرف عليك', 'ok', '');
   var busy = false;
   kioskState.loopTimer = setInterval(async function(){
-    if(!kioskState.running || busy || !video.videoWidth) return;
+    if(!kioskState.running || busy || kioskState.awaitingConfirm || !video.videoWidth) return;
     busy = true;
     try{
       var det = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
       if(det){
-        var match = kioskState.matcher.findBestMatch(det.descriptor);
-        if(match.label!=='unknown'){
-          var last = kioskState.lastPunch[match.label] || 0;
-          if(Date.now() - last > 60000){
-            kioskState.lastPunch[match.label] = Date.now();
-            await kioskHandleMatch(match.label);
+        var empId = kioskConfidentMatch(det.descriptor, kioskState.threshold);
+        if(empId){
+          if(kioskState.streakLabel === empId){
+            kioskState.streakCount++;
+          } else {
+            kioskState.streakLabel = empId;
+            kioskState.streakCount = 1;
           }
+          if(kioskState.streakCount >= KIOSK_REQUIRED_STREAK){
+            var last = kioskState.lastPunch[empId] || 0;
+            if(Date.now() - last > 60000){
+              kioskShowConfirm(empId);
+            } else {
+              kioskState.streakLabel = null; kioskState.streakCount = 0;
+            }
+          }
+        } else {
+          /* لا يوجد تخمين واضح (تحت حد الثقة أو قريب جدًا من موظف تاني) — نصفّر العدّاد ونستنى لقطة أوضح */
+          kioskState.streakLabel = null; kioskState.streakCount = 0;
         }
       }
     }catch(err){ /* ignore transient detection errors */ }
     busy = false;
   }, 1200);
+}
+
+/* شاشة تأكيد بشرية قبل تسجيل البصمة فعليًا: بنوقف المسح، نعرض اسم وصورة الموظف اللي النظام
+   متأكد منه، ونطلب من الموظف يتأكد بنفسه إنه هو قبل ما نسجّل أي بصمة — ده خط دفاع أخير ضد أي
+   خطأ تعرّف (زي حالة موظفين شكلهم متقارب). */
+function kioskShowConfirm(empId){
+  var emp = employeeById(empId);
+  if(!emp){ kioskState.streakLabel = null; kioskState.streakCount = 0; return; }
+  kioskState.awaitingConfirm = true;
+  kioskSetStatus('تأكد من هويتك', '', '');
+  var photoHtml = emp.photo ? '<img class="kiosk-confirm-photo" src="'+esc(emp.photo)+'">' : '';
+  kioskSetResult(
+    '<div class="kiosk-confirm-card">'+
+      photoHtml+
+      '<div class="kiosk-confirm-q">هل هذا أنت؟</div>'+
+      '<div class="kiosk-confirm-name">'+esc(emp.name)+'</div>'+
+      '<div class="kiosk-confirm-btns">'+
+        '<button class="kiosk-confirm-yes" onclick="kioskConfirmYes(\''+emp.id+'\')">✓ نعم، هذا أنا</button>'+
+        '<button class="kiosk-confirm-no" onclick="kioskConfirmNo()">✕ لا، مش أنا</button>'+
+      '</div>'+
+      '<div class="kiosk-confirm-timer" id="kiosk-confirm-timer"></div>'+
+    '</div>'
+  );
+  var secondsLeft = Math.round(KIOSK_CONFIRM_TIMEOUT_MS/1000);
+  var timerEl = document.getElementById('kiosk-confirm-timer');
+  if(timerEl) timerEl.textContent = 'هتلغي تلقائيًا خلال '+secondsLeft+' ثانية لو مفيش رد';
+  var tick = setInterval(function(){
+    secondsLeft--;
+    var el = document.getElementById('kiosk-confirm-timer');
+    if(el) el.textContent = 'هتلغي تلقائيًا خلال '+Math.max(secondsLeft,0)+' ثانية لو مفيش رد';
+    if(secondsLeft<=0) clearInterval(tick);
+  }, 1000);
+  kioskState.confirmTimer = setTimeout(function(){ clearInterval(tick); kioskConfirmNo(); }, KIOSK_CONFIRM_TIMEOUT_MS);
+}
+
+function kioskClearConfirmUi(){
+  if(kioskState.confirmTimer){ clearTimeout(kioskState.confirmTimer); kioskState.confirmTimer = null; }
+  kioskState.awaitingConfirm = false;
+  kioskState.streakLabel = null; kioskState.streakCount = 0;
+}
+
+async function kioskConfirmYes(empId){
+  kioskClearConfirmUi();
+  kioskState.lastPunch[empId] = Date.now();
+  kioskSetResult('');
+  await kioskHandleMatch(empId);
+}
+
+function kioskConfirmNo(){
+  kioskClearConfirmUi();
+  kioskSetResult('');
+  kioskSetStatus('قف أمام الكاميرا وانتظر التعرف عليك', 'ok', 'لو ظهر اسم غلط قبل كده، جرّب تقرّب أكتر من الكاميرا وتحت إضاءة أفضل');
 }
 
 async function kioskHandleMatch(empId){
