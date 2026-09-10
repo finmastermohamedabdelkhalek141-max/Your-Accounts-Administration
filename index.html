@@ -580,7 +580,7 @@ table.rpt-table th { font-weight: 700 !important; }
           </div>
           <div class="panel-body">
             <div class="table-wrap"><table>
-              <thead><tr><th>الموظف</th><th>الوظيفة</th><th>أيام العمل</th><th>حضور</th><th>غياب</th><th>إجازة</th><th>تأخير (مرات)</th><th>إجمالي دقائق التأخير</th><th>ساعات العمل الفعلية</th><th>نسبة الحضور</th><th>الراتب الأساسي</th><th>الخصم التقديري</th><th>الصافي المقترح</th></tr></thead>
+              <thead><tr><th>الموظف</th><th>الوظيفة</th><th>أيام العمل</th><th>حضور</th><th>غياب</th><th>إجازة</th><th>تأخير (مرات)</th><th>إجمالي وقت التأخير</th><th>ساعات العمل الفعلية</th><th>نسبة الحضور</th><th>الراتب الأساسي</th><th>الخصم التقديري</th><th>الصافي المقترح</th></tr></thead>
               <tbody id="arep-summary-tbody"></tbody>
             </table></div>
           </div>
@@ -2348,6 +2348,12 @@ function saveAttendanceReportSettings(){
 }
 function timeToMinutes(hm){ if(!hm) return null; var parts=String(hm).split(':'); if(parts.length<2) return null; var h=parseInt(parts[0],10), m=parseInt(parts[1],10); if(isNaN(h)||isNaN(m)) return null; return h*60+m; }
 function minutesToHours(min){ return Math.round((min/60)*100)/100; }
+function hmFromMinutes(min){
+  min = Math.round(Number(min)||0);
+  if(min<=0) return '0 د';
+  var h = Math.floor(min/60), m = min%60;
+  return h>0 ? (h+' س'+(m?(' '+m+' د'):'')) : (m+' د');
+}
 function weekdayLabel(iso){ var d=new Date(iso+'T00:00:00'); return WEEKDAY_LABELS_AR[d.getDay()]; }
 function attendanceDefaultRange(){
   var d = new Date();
@@ -2459,7 +2465,7 @@ function renderAttendanceReport(){
       '<div class="stat-card"><div class="label">أيام العمل في الفترة</div><div class="value nums">'+businessDays.length+'</div></div>'+
       '<div class="stat-card"><div class="label">نسبة الحضور العامة</div><div class="value nums">'+avgRate+'%</div></div>'+
       '<div class="stat-card gold"><div class="label">إجمالي أيام الغياب</div><div class="value nums">'+totalAbsent+'</div></div>'+
-      '<div class="stat-card gold"><div class="label">إجمالي دقائق التأخير</div><div class="value nums">'+totalLateMinutes+'</div></div>'+
+      '<div class="stat-card gold"><div class="label">إجمالي وقت التأخير</div><div class="value nums">'+hmFromMinutes(totalLateMinutes)+'</div></div>'+
       '<div class="stat-card red"><div class="label">إجمالي الخصومات التقديرية</div><div class="value nums">'+fmt(totalDeduction)+'</div></div>';
   }
 
@@ -2471,7 +2477,7 @@ function renderAttendanceReport(){
       tbody.innerHTML = summaries.map(function(s){
         var barCls = s.attendanceRate>=90?'':(s.attendanceRate>=75?'warn':'bad');
         var bar = '<div class="arep-bar-wrap"><div class="arep-bar-outer"><div class="arep-bar-inner '+barCls+'" style="width:'+s.attendanceRate+'%;"></div></div><span class="arep-bar-pct nums">'+s.attendanceRate+'%</span></div>';
-        return '<tr><td>'+esc(s.name)+'</td><td>'+esc(s.jobTitle)+'</td><td class="nums">'+s.totalDays+'</td><td class="nums">'+s.presentDays+'</td><td class="nums">'+s.absentDays+'</td><td class="nums">'+s.leaveDays+'</td><td class="nums">'+s.lateDays+'</td><td class="nums">'+s.lateMinutes+'</td><td class="nums">'+minutesToHours(s.workedMinutes)+'</td><td>'+bar+'</td><td class="nums">'+(s.monthlySalary?fmt(s.monthlySalary):'—')+'</td><td class="nums">'+(s.monthlySalary?fmt(s.totalDeduction):'—')+'</td><td class="nums">'+(s.netPayable!=null?fmt(s.netPayable):'—')+'</td></tr>';
+        return '<tr><td>'+esc(s.name)+'</td><td>'+esc(s.jobTitle)+'</td><td class="nums">'+s.totalDays+'</td><td class="nums">'+s.presentDays+'</td><td class="nums">'+s.absentDays+'</td><td class="nums">'+s.leaveDays+'</td><td class="nums">'+s.lateDays+'</td><td class="nums">'+hmFromMinutes(s.lateMinutes)+'</td><td class="nums">'+minutesToHours(s.workedMinutes)+'</td><td>'+bar+'</td><td class="nums">'+(s.monthlySalary?fmt(s.monthlySalary):'—')+'</td><td class="nums">'+(s.monthlySalary?fmt(s.totalDeduction):'—')+'</td><td class="nums">'+(s.netPayable!=null?fmt(s.netPayable):'—')+'</td></tr>';
       }).join('');
     }
   }
@@ -2503,7 +2509,7 @@ function renderAttendanceReportDetail(){
       '<div class="arep-detail-item"><div class="lbl">أيام الحضور</div><div class="val nums">'+s.presentDays+'</div></div>'+
       '<div class="arep-detail-item bad"><div class="lbl">أيام الغياب</div><div class="val nums">'+s.absentDays+'</div></div>'+
       '<div class="arep-detail-item"><div class="lbl">أيام الإجازة</div><div class="val nums">'+s.leaveDays+'</div></div>'+
-      '<div class="arep-detail-item warn"><div class="lbl">مرات التأخير</div><div class="val nums">'+s.lateDays+' ('+s.lateMinutes+' د)</div></div>'+
+      '<div class="arep-detail-item warn"><div class="lbl">مرات التأخير</div><div class="val nums">'+s.lateDays+' ('+hmFromMinutes(s.lateMinutes)+')</div></div>'+
       '<div class="arep-detail-item"><div class="lbl">ساعات العمل الفعلية</div><div class="val nums">'+minutesToHours(s.workedMinutes)+'</div></div>'+
       '<div class="arep-detail-item"><div class="lbl">نسبة الحضور</div><div class="val nums">'+s.attendanceRate+'%</div></div>'+
       '<div class="arep-detail-item"><div class="lbl">الراتب الأساسي</div><div class="val nums">'+(s.monthlySalary?fmt(s.monthlySalary):'غير مسجَّل')+'</div></div>'+
@@ -2514,7 +2520,7 @@ function renderAttendanceReportDetail(){
   var statusCls = {'حاضر':'badge-green','غائب':'badge-red','إجازة':'badge-gold','متأخر':'badge-gold','مأمورية':'badge-grey'};
   tbody.innerHTML = s.days.map(function(d){
     var st = d.isAbsent?'غائب':(d.isLeave?'إجازة':d.status);
-    return '<tr><td class="nums">'+formatDate(d.date)+'</td><td>'+d.day+'</td><td class="nums">'+(d.checkIn||'—')+'</td><td class="nums">'+(d.breakOut||'—')+'</td><td class="nums">'+(d.breakIn||'—')+'</td><td class="nums">'+(d.checkOut||'—')+'</td><td class="nums">'+(d.isPresent?minutesToHours(d.workedMinutes):'—')+'</td><td><span class="badge '+(statusCls[st]||'badge-grey')+'">'+esc(st)+(d.isLate?' + تأخير':'')+'</span></td><td class="nums">'+(d.lateMinutes||'—')+'</td><td class="nums">'+(d.earlyMinutes||'—')+'</td><td>'+esc(d.notes||'')+'</td></tr>';
+    return '<tr><td class="nums">'+formatDate(d.date)+'</td><td>'+d.day+'</td><td class="nums">'+(d.checkIn||'—')+'</td><td class="nums">'+(d.breakOut||'—')+'</td><td class="nums">'+(d.breakIn||'—')+'</td><td class="nums">'+(d.checkOut||'—')+'</td><td class="nums">'+(d.isPresent?minutesToHours(d.workedMinutes):'—')+'</td><td><span class="badge '+(statusCls[st]||'badge-grey')+'">'+esc(st)+(d.isLate?' + تأخير':'')+'</span></td><td class="nums">'+(d.lateMinutes?hmFromMinutes(d.lateMinutes):'—')+'</td><td class="nums">'+(d.earlyMinutes?hmFromMinutes(d.earlyMinutes):'—')+'</td><td>'+esc(d.notes||'')+'</td></tr>';
   }).join('');
 }
 
@@ -2540,7 +2546,7 @@ function payrollKpiHtml(businessDaysCount, summaries){
     '<div class="rpt-kpi"><div class="lbl">أيام العمل بالفترة</div><div class="val">'+businessDaysCount+'</div></div>'+
     '<div class="rpt-kpi"><div class="lbl">نسبة الحضور العامة</div><div class="val">'+avgRate+'%</div></div>'+
     '<div class="rpt-kpi"><div class="lbl">إجمالي أيام الغياب</div><div class="val">'+totalAbsent+'</div></div>'+
-    '<div class="rpt-kpi"><div class="lbl">إجمالي دقائق التأخير</div><div class="val">'+totalLate+'</div></div>'+
+    '<div class="rpt-kpi"><div class="lbl">إجمالي وقت التأخير</div><div class="val">'+hmFromMinutes(totalLate)+'</div></div>'+
     '<div class="rpt-kpi"><div class="lbl">إجمالي الخصومات التقديرية</div><div class="val">'+fmt(totalDeduction)+'</div></div>'+
     '</div>';
 }
@@ -2555,7 +2561,7 @@ function payrollSummaryRows(summaries){
   return summaries.map(function(s){
     return {
       'الموظف': s.name, 'الوظيفة': s.jobTitle, 'أيام العمل': s.totalDays, 'حضور': s.presentDays, 'غياب': s.absentDays, 'إجازة': s.leaveDays,
-      'تأخير (مرات)': s.lateDays, 'إجمالي دقائق التأخير': s.lateMinutes, 'ساعات العمل الفعلية': minutesToHours(s.workedMinutes),
+      'تأخير (مرات)': s.lateDays, 'إجمالي وقت التأخير': hmFromMinutes(s.lateMinutes), 'ساعات العمل الفعلية': minutesToHours(s.workedMinutes),
       'نسبة الحضور': s.attendanceRate+'%', 'الراتب الأساسي': s.monthlySalary?fmt(s.monthlySalary):'—',
       'الخصم التقديري': s.monthlySalary?fmt(s.totalDeduction):'—', 'الصافي المقترح': s.netPayable!=null?fmt(s.netPayable):'—'
     };
@@ -2594,7 +2600,7 @@ function employeeDetailRows(s){
     return {
       'التاريخ': formatDate(d.date), 'اليوم': d.day, 'الحضور': d.checkIn||'—', 'خروج استراحة': d.breakOut||'—', 'عودة استراحة': d.breakIn||'—',
       'الانصراف': d.checkOut||'—', 'ساعات العمل': d.isPresent?minutesToHours(d.workedMinutes):'—', 'الحالة': st+(d.isLate?' (متأخر)':''),
-      'تأخير (دقيقة)': d.lateMinutes||0, 'انصراف مبكر (دقيقة)': d.earlyMinutes||0, 'ملاحظات': d.notes||'—'
+      'تأخير': d.lateMinutes?hmFromMinutes(d.lateMinutes):'—', 'انصراف مبكر': d.earlyMinutes?hmFromMinutes(d.earlyMinutes):'—', 'ملاحظات': d.notes||'—'
     };
   });
 }
@@ -2617,7 +2623,7 @@ function buildEmployeeDetailHTML(toolbar){
     '<div class="rpt-kpi"><div class="lbl">أيام الغياب</div><div class="val">'+s.absentDays+'</div></div>'+
     '<div class="rpt-kpi"><div class="lbl">أيام الإجازة</div><div class="val">'+s.leaveDays+'</div></div>'+
     '<div class="rpt-kpi"><div class="lbl">مرات التأخير</div><div class="val">'+s.lateDays+'</div></div>'+
-    '<div class="rpt-kpi"><div class="lbl">إجمالي دقائق التأخير</div><div class="val">'+s.lateMinutes+'</div></div>'+
+    '<div class="rpt-kpi"><div class="lbl">إجمالي وقت التأخير</div><div class="val">'+hmFromMinutes(s.lateMinutes)+'</div></div>'+
     '<div class="rpt-kpi"><div class="lbl">نسبة الحضور</div><div class="val">'+s.attendanceRate+'%</div></div>'+
     '<div class="rpt-kpi"><div class="lbl">الراتب الأساسي</div><div class="val">'+(s.monthlySalary?fmt(s.monthlySalary):'غير مسجَّل')+'</div></div>'+
     '<div class="rpt-kpi"><div class="lbl">الخصم التقديري</div><div class="val">'+(s.monthlySalary?fmt(s.totalDeduction):'—')+'</div></div>'+
