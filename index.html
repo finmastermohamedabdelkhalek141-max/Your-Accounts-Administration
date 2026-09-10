@@ -292,8 +292,8 @@ table.rpt-table th { font-weight: 700 !important; }
   <div class="login-card">
     <h1>إدارة حسابات شركة بن أرحب للتطوير العقاري</h1>
     <p class="sub">الموردين والعُهد وشؤون الموظفين — تسجيل الدخول للمتابعة</p>
-    <div class="field"><label>اسم المستخدم</label><input id="login-user" type="text" placeholder="اسم المستخدم"></div>
-    <div class="field"><label>كلمة المرور</label><input id="login-pass" type="password" placeholder="كلمة المرور"></div>
+    <div class="field"><label>اسم المستخدم</label><input id="login-user" type="text" placeholder="اسم المستخدم" autocapitalize="off" autocorrect="off" autocomplete="username" spellcheck="false"></div>
+    <div class="field"><label>كلمة المرور</label><input id="login-pass" type="password" placeholder="كلمة المرور" autocapitalize="off" autocorrect="off" autocomplete="current-password" spellcheck="false"></div>
     <button class="btn btn-primary" id="login-btn" onclick="doLogin()">دخول</button>
     <div class="login-error" id="login-error"></div>
     <a class="login-kiosk-link" onclick="location.hash='kiosk';location.reload();">فتح كشك تسجيل البصمة (بدون تسجيل دخول)</a>
@@ -917,10 +917,19 @@ function saveState(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE)); 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
 
 /* ===================== AUTH ===================== */
+/* بتشيل أي رموز يونيكود شفافة (زي علامات الاتجاه RTL/LTR أو المسافات غير المنقسمة أو
+   Zero-Width) اللي بتتلزق أحيانًا لما المستخدم ينسخ اسمه أو كلمة السر من واتساب أو من
+   رسالة، وبتشيل كمان المسافات الزيادة من البداية والنهاية. من غيرها المطابقة كانت بتفشل
+   حرفيًا رغم إن الكلام شكله مطابق تمامًا على الشاشة. */
+function cleanCreds(str){
+  return String(str||'')
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF\u00A0]/g,'')
+    .trim();
+}
 function doLogin(){
-  var u = document.getElementById('login-user').value.trim();
-  var p = document.getElementById('login-pass').value;
-  var found = STATE.users.find(function(x){ return x.username===u && x.password===p; });
+  var u = cleanCreds(document.getElementById('login-user').value);
+  var p = cleanCreds(document.getElementById('login-pass').value);
+  var found = STATE.users.find(function(x){ return x.username.toLowerCase()===u.toLowerCase() && x.password===p; });
   var err = document.getElementById('login-error');
   if(!found){ err.textContent = 'اسم المستخدم أو كلمة المرور غير صحيحة'; return; }
   err.textContent = '';
@@ -1107,17 +1116,17 @@ function openUserModal(id){
   var u = id ? STATE.users.find(function(x){ return x.id===id; }) : {username:'',password:'',role:'مستخدم',permissions:allPermsFalseExceptDashboard()};
   var body =
     '<div class="grid grid-2">'+
-      '<div class="field"><label>اسم المستخدم</label><input id="u-username" value="'+esc(u.username)+'"></div>'+
-      '<div class="field"><label>كلمة المرور</label><input id="u-password" type="text" value="'+esc(u.password)+'"></div>'+
+      '<div class="field"><label>اسم المستخدم</label><input id="u-username" value="'+esc(u.username)+'" autocapitalize="off" autocorrect="off" spellcheck="false"></div>'+
+      '<div class="field"><label>كلمة المرور</label><input id="u-password" type="text" value="'+esc(u.password)+'" autocapitalize="off" autocorrect="off" spellcheck="false"></div>'+
     '</div>'+
     '<div class="divider"></div>'+
     '<div class="custom-panel-title" style="font-weight:700;color:var(--ledger-dark);margin-bottom:8px;">صلاحيات الشاشات</div>'+
     permTableHtml(u.permissions);
   openModal(id?'تعديل مستخدم':'مستخدم جديد', body, function(){
-    var username = document.getElementById('u-username').value.trim();
-    var password = document.getElementById('u-password').value;
+    var username = cleanCreds(document.getElementById('u-username').value);
+    var password = cleanCreds(document.getElementById('u-password').value);
     if(!username || !password){ toast('يرجى إدخال اسم المستخدم وكلمة المرور','err'); return false; }
-    if(!id && STATE.users.some(function(x){ return x.username===username; })){ toast('اسم المستخدم مستخدم بالفعل','err'); return false; }
+    if(!id && STATE.users.some(function(x){ return x.username.toLowerCase()===username.toLowerCase(); })){ toast('اسم المستخدم مستخدم بالفعل','err'); return false; }
     var perms = {};
     document.querySelectorAll('#modal-body [data-perm]').forEach(function(chk){ perms[chk.getAttribute('data-perm')] = chk.checked; });
     var data = { username:username, password:password, role: ((perms['users-add']||perms['users-edit']||perms['users-delete']) ? 'مدير النظام' : 'مستخدم'), permissions: perms };
