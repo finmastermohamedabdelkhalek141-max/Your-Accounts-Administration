@@ -679,6 +679,16 @@ table.rpt-table th { font-weight: 700 !important; }
         <div class="panel">
           <div class="panel-head"><h3>موقع المكتب</h3></div>
           <div class="panel-body">
+            <div class="field" style="max-width:420px;">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                <input type="checkbox" id="ks-require-location" style="width:auto;" onchange="ksToggleLocationFields()">
+                تفعيل التحقق من موقع المكتب
+              </label>
+              <div class="hint" style="margin-top:6px;">
+                الكشك بيبدأ بالتعرف على الوجه فورًا من غير أي انتظار. لو فعّلت الخانة دي، بعد ما الموظف يتعرف عليه ويأكد هويته، هيتم مطابقة موقعه بسرعة (تحديد موقع مباشر بدون تأخير) قبل ما تتسجل البصمة فعليًا — فلو كان بره نطاق المكتب هيظهرله تنبيه بدل ما تتسجل بصمته. لو سايبها فاضية، هيتم تسجيل البصمة فورًا من غير أي تحقق من الموقع.
+              </div>
+            </div>
+            <div id="ks-location-fields">
             <div class="grid grid-3">
               <div class="field"><label>خط العرض (Latitude)</label><input type="text" id="ks-lat" placeholder="مثال: 24.7136"></div>
               <div class="field"><label>خط الطول (Longitude)</label><input type="text" id="ks-lng" placeholder="مثال: 46.6753"></div>
@@ -687,6 +697,7 @@ table.rpt-table th { font-weight: 700 !important; }
             <button class="btn btn-outline btn-sm" onclick="ksUseMyLocation()">📍 استخدم موقعي الحالي الآن (لازم تكون واقف بالمكتب)</button>
             <div class="hint" style="margin-top:10px;">
               محتاج تجيب الإحداثيات من جوجل ماب؟ افتح <a href="https://www.google.com/maps" target="_blank" class="kiosk-map-link">خرائط جوجل</a>، دوس بزر الفأرة الأيمن (أو ضغطة مطوّلة على الموبايل) على مكان المكتب بالظبط، هيظهرلك رقمين زي <span class="nums">24.7136, 46.6753</span> — الرقم الأول انسخه في خانة خط العرض والتاني في خانة خط الطول.
+            </div>
             </div>
             <div class="field" style="margin-top:16px;max-width:280px;">
               <label>حساسية التعرف على الوجه</label>
@@ -817,6 +828,19 @@ var SESSION_KEY = 'unifiedSystemSession_v1';
 var STATE = loadState();
 var currentUser = null;
 
+/* ===================== OWNERSHIP / PER-USER VISIBILITY ===================== */
+// مدير النظام (أي مستخدم عنده صلاحيات كاملة على شاشة المستخدمين) يشوف كل البيانات كما كان الحال دائمًا.
+// أي مستخدم آخر ما يشوفش إلا السجلات اللي هو نفسه أضافها (سجل createdBy). السجلات القديمة (قبل هذه الميزة)
+// أو المضافة تلقائيًا من كشك البصمة (بدون تسجيل دخول مستخدم) ما تُنسب لحد، فتفضل ظاهرة للجميع.
+function isAdminUser(){ return !!(currentUser && currentUser.role==='مدير النظام'); }
+function visibleRows(arr){
+  arr = arr || [];
+  if(!currentUser || isAdminUser()) return arr;
+  var myId = currentUser.id;
+  return arr.filter(function(r){ return !r || r.createdBy==null || r.createdBy===myId; });
+}
+function stampCreator(data){ data.createdBy = currentUser ? currentUser.id : null; return data; }
+
 function allPermsTrue(){
   var p = {};
   SCREEN_DEFS.forEach(function(s){ p[s.key+'-view']=true; p[s.key+'-add']=true; p[s.key+'-edit']=true; p[s.key+'-delete']=true; p[s.key+'-reports']=true; });
@@ -852,7 +876,7 @@ function loadState(){
   if(!s.itemTabsData) s.itemTabsData = {};
   if(!s.itemStatuses) s.itemStatuses = {};
   if(!s.settings) s.settings = {};
-  if(!s.settings.kiosk) s.settings.kiosk = { lat:null, lng:null, radius:150, threshold:0.5 };
+  if(!s.settings.kiosk) s.settings.kiosk = { requireLocation:false, lat:null, lng:null, radius:150, threshold:0.5 };
   if(!s.settings.payroll) s.settings.payroll = { officialCheckIn:'08:00', officialCheckOut:'17:00', breakMinutes:60, graceMinutes:15, workDaysPerMonth:30 };
   // migrate old payroll settings shape (officialCheckIn + workHours) to the new shape (officialCheckIn + officialCheckOut + breakMinutes)
   if(s.settings.payroll.officialCheckOut===undefined){
@@ -1135,30 +1159,43 @@ function ksUseMyLocation(){
     toast('تعذر تحديد موقعك: '+(err.message||'يرجى السماح بالوصول للموقع')+'','err');
   }, {enableHighAccuracy:true, timeout:15000});
 }
+function ksToggleLocationFields(){
+  var cb = document.getElementById('ks-require-location');
+  var fields = document.getElementById('ks-location-fields');
+  if(fields) fields.style.display = (cb && cb.checked) ? '' : 'none';
+}
 function saveKioskSettings(){
   if(!hasEdit('kioskSettings')){ toast('لا تملك صلاحية التعديل','err'); return; }
+  var requireLocation = !!document.getElementById('ks-require-location').checked;
   var lat = parseFloat(document.getElementById('ks-lat').value);
   var lng = parseFloat(document.getElementById('ks-lng').value);
   var radius = parseFloat(document.getElementById('ks-radius').value) || 150;
   var threshold = parseFloat(document.getElementById('ks-threshold').value) || 0.5;
-  if(isNaN(lat) || isNaN(lng)){ toast('أدخل خط العرض وخط الطول أولاً','err'); return; }
-  STATE.settings.kiosk = { lat:lat, lng:lng, radius:radius, threshold:threshold };
+  if(requireLocation && (isNaN(lat) || isNaN(lng))){ toast('أدخل خط العرض وخط الطول أولاً','err'); return; }
+  STATE.settings.kiosk = { requireLocation:requireLocation, lat:isNaN(lat)?null:lat, lng:isNaN(lng)?null:lng, radius:radius, threshold:threshold };
   saveState();
   toast('تم حفظ إعدادات الكشك بنجاح');
   renderKioskSettings();
 }
 function renderKioskSettings(){
-  var k = STATE.settings.kiosk || {lat:null,lng:null,radius:150,threshold:0.5};
+  var k = STATE.settings.kiosk || {requireLocation:false,lat:null,lng:null,radius:150,threshold:0.5};
+  var reqEl = document.getElementById('ks-require-location');
   var latEl = document.getElementById('ks-lat'), lngEl = document.getElementById('ks-lng'), radEl = document.getElementById('ks-radius'), thEl = document.getElementById('ks-threshold');
+  if(reqEl) reqEl.checked = !!k.requireLocation;
   if(latEl && document.activeElement!==latEl) latEl.value = k.lat!=null ? k.lat : '';
   if(lngEl && document.activeElement!==lngEl) lngEl.value = k.lng!=null ? k.lng : '';
   if(radEl && document.activeElement!==radEl) radEl.value = k.radius || 150;
   if(thEl) thEl.value = k.threshold || 0.5;
+  ksToggleLocationFields();
   var statusEl = document.getElementById('ks-current-status');
   if(statusEl){
-    statusEl.innerHTML = (k.lat!=null && k.lng!=null)
-      ? '<div class="geo-status-box geo-status-ok">تم ضبط موقع المكتب على: <span class="nums">'+k.lat+', '+k.lng+'</span> — نطاق <span class="nums">'+k.radius+'</span> متر</div>'
-      : '<div class="geo-status-box geo-status-bad">لسه موقع المكتب مش متضبط — الكشك مش هيشتغل غير بعد ما تحفظ الإحداثيات هنا</div>';
+    if(!k.requireLocation){
+      statusEl.innerHTML = '<div class="geo-status-box geo-status-ok">التحقق من الموقع معطّل — هيتم تسجيل البصمة فورًا بعد التعرف على الوجه من غير أي تحقق من الموقع</div>';
+    } else {
+      statusEl.innerHTML = (k.lat!=null && k.lng!=null)
+        ? '<div class="geo-status-box geo-status-ok">تم ضبط موقع المكتب على: <span class="nums">'+k.lat+', '+k.lng+'</span> — نطاق <span class="nums">'+k.radius+'</span> متر. هتتم مطابقة الموقع بسرعة بعد التعرف على الوجه وتأكيد الهوية مباشرة</div>'
+        : '<div class="geo-status-box geo-status-bad">لسه موقع المكتب مش متضبط — الكشك مش هيشتغل غير بعد ما تحفظ الإحداثيات هنا</div>';
+    }
   }
   var noPhoto = STATE.employees.filter(function(e){ return !e.photo; });
   var listEl = document.getElementById('ks-nophoto-list');
@@ -1417,7 +1454,7 @@ function openEmployeeModal(id){
     if(!name){ toast('يرجى إدخال اسم الموظف','err'); return false; }
     var data = { name:name, company:document.getElementById('f-company').value.trim(), jobTitle:document.getElementById('f-job').value.trim(), profession:document.getElementById('f-profession').value.trim(), qualification:document.getElementById('f-qual').value.trim(), idCard:document.getElementById('f-idcard').value.trim(), passport:document.getElementById('f-passport').value.trim(), phone:document.getElementById('f-phone').value.trim(), residencyExpiry:document.getElementById('f-expiry').value, monthlySalary:document.getElementById('f-salary').value, officialCheckIn:document.getElementById('f-off-in').value, officialCheckOut:document.getElementById('f-off-out').value, breakMinutes:document.getElementById('f-off-break').value, photo:window.currentEmployeePhotos.photo, passportImage:window.currentEmployeePhotos.passportImage, residencyImage:window.currentEmployeePhotos.residencyImage };
     var photoChanged = !id || (e.photo||'')!==(data.photo||'');
-    if(id){ Object.assign(e,data); if(photoChanged) delete e.faceDescriptor; } else { data.id=uid(); STATE.employees.push(data); }
+    if(id){ Object.assign(e,data); if(photoChanged) delete e.faceDescriptor; } else { data.id=uid(); stampCreator(data); STATE.employees.push(data); }
     saveState(); renderAll();
     toast('تم الحفظ بنجاح');
   }, true);
@@ -1434,7 +1471,7 @@ function renderEmployees(){
   var canDelete = hasDelete('employees');
   var addBtn = document.getElementById('emp-add-btn'); if(addBtn) addBtn.style.display = canAdd?'':'none';
   var q = (document.getElementById('emp-search')||{value:''}).value.trim().toLowerCase();
-  var rows = STATE.employees.filter(function(e){ return !q || (e.name||'').toLowerCase().indexOf(q)>-1 || (e.company||'').toLowerCase().indexOf(q)>-1; });
+  var rows = visibleRows(STATE.employees).filter(function(e){ return !q || (e.name||'').toLowerCase().indexOf(q)>-1 || (e.company||'').toLowerCase().indexOf(q)>-1; });
   var tbody = document.getElementById('employees-tbody'); if(!tbody) return;
   if(!rows.length){ tbody.innerHTML = '<tr class="empty-row"><td colspan="14">لا يوجد موظفون بعد.</td></tr>'; return; }
   tbody.innerHTML = rows.map(function(e){
@@ -1464,7 +1501,7 @@ function openSupplierModal(id){
     var name = document.getElementById('f-sup-name').value.trim();
     if(!name){ toast('يرجى إدخال اسم المورد','err'); return false; }
     var data = { name:name, phone:document.getElementById('f-sup-phone').value.trim(), taxNumber:formatTaxNumber(document.getElementById('f-sup-tax').value), notes:document.getElementById('f-sup-notes').value.trim() };
-    if(id){ Object.assign(s,data); } else { data.id=uid(); STATE.suppliers.push(data); }
+    if(id){ Object.assign(s,data); } else { data.id=uid(); stampCreator(data); STATE.suppliers.push(data); }
     saveState(); renderAll();
     toast('تم الحفظ بنجاح');
   }, false);
@@ -1481,7 +1518,7 @@ function renderSuppliers(){
   var canDelete = hasDelete('suppliers');
   var addBtn = document.getElementById('sup-add-btn'); if(addBtn) addBtn.style.display = canAdd?'':'none';
   var q = (document.getElementById('sup-search')||{value:''}).value.trim().toLowerCase();
-  var rows = STATE.suppliers.filter(function(s){ return !q || (s.name||'').toLowerCase().indexOf(q)>-1 || (s.phone||'').toLowerCase().indexOf(q)>-1; });
+  var rows = visibleRows(STATE.suppliers).filter(function(s){ return !q || (s.name||'').toLowerCase().indexOf(q)>-1 || (s.phone||'').toLowerCase().indexOf(q)>-1; });
   var tbody = document.getElementById('suppliers-tbody'); if(!tbody) return;
   if(!rows.length){ tbody.innerHTML = '<tr class="empty-row"><td colspan="5">لا يوجد موردون بعد.</td></tr>'; return; }
   tbody.innerHTML = rows.map(function(s){
@@ -1585,7 +1622,7 @@ function renderGenericScreen(cfgKey){
   var canEdit = hasEdit(cfg.key);
   var canDelete = hasDelete(cfg.key);
   var canReports = hasReports(cfg.key);
-  var rows = STATE[cfg.key] || [];
+  var rows = visibleRows(STATE[cfg.key]);
   var rowsHtml = rows.length ? rows.map(function(r){
     var tds = cfg.columns.map(function(c){
       var v = r[c.key];
@@ -1639,7 +1676,7 @@ function openGenericModal(cfgKey, id){
     });
     if(!ok) return false;
     if(existing){ Object.assign(existing, data); }
-    else { data.id = uid(); STATE[cfg.key].push(data); }
+    else { data.id = uid(); stampCreator(data); STATE[cfg.key].push(data); }
     saveState(); renderAll();
     toast('تم الحفظ بنجاح');
   }, false);
@@ -1675,7 +1712,7 @@ function renderInvoices(){
   if(!el) return;
   var canAdd = hasAdd('invoices');
   var canReports = hasReports('invoices');
-  var rows = (STATE.invoices||[]).slice().reverse();
+  var rows = visibleRows(STATE.invoices).slice().reverse();
   el.innerHTML =
     '<div class="topbar"><div><h2>الفواتير والمستندات</h2><div class="desc">تسجيل فواتير وعروض أسعار الموردين وربطها بالمشاريع والعُهد</div></div></div>'+
     '<div class="panel"><div class="panel-head"><h3>السجل</h3><div class="panel-toolbar">'+
@@ -1795,7 +1832,7 @@ function openInvoiceModal(id){
       taxTotal: taxTotalVal,
       total: netVal
     };
-    if(existing){ Object.assign(existing, data); } else { data.id = uid(); STATE.invoices.push(data); }
+    if(existing){ Object.assign(existing, data); } else { data.id = uid(); stampCreator(data); STATE.invoices.push(data); }
     invItems.forEach(function(r){
       var hit = findCheaperHistoricalPurchase(r.name, Number(r.price)||0);
       if(hit){
@@ -1810,7 +1847,7 @@ function openInvoiceModal(id){
     name = (name||'').trim().toLowerCase();
     if(!name || !(currentPrice>0)) return null;
     var best = null;
-    (STATE.invoices||[]).forEach(function(inv){
+    visibleRows(STATE.invoices).forEach(function(inv){
       if(existing && inv.id===existing.id) return;
       (inv.items||[]).forEach(function(it){
         var itName = (it.name||'').trim().toLowerCase();
@@ -2045,7 +2082,7 @@ function renderItemExitDocs(){
   var canDelete = hasDelete('itemExitDocs');
   var canReports = hasReports('itemExitDocs');
   var projName = function(id){ var p=(STATE.projects||[]).filter(function(x){return x.id===id;})[0]; return p?p.name:'—'; };
-  var rows = (STATE.itemExitDocs||[]).slice().reverse();
+  var rows = visibleRows(STATE.itemExitDocs).slice().reverse();
   var trs = rows.length ? rows.map(function(d){
     var itemsTxt = (d.items||[]).map(function(i){ return i.name+' ('+i.qty+')'; }).join('، ');
     var actions = (canEdit||canDelete) ? ('<td>'+(canEdit?'<button class="icon-btn" onclick="openItemExitDocModal(\''+d.id+'\')">تعديل</button>':'')+(canDelete?'<button class="icon-btn danger" onclick="deleteItemExitDoc(\''+d.id+'\')">حذف</button>':'')+'</td>') : '<td>—</td>';
@@ -2093,7 +2130,7 @@ function openItemExitDocModal(id){
       date: document.getElementById('ex-date').value,
       items: exItems.map(function(r){ return { name:r.name.trim(), qty:Number(r.qty)||0 }; })
     };
-    if(existing){ Object.assign(existing, data); } else { data.id = uid(); STATE.itemExitDocs.push(data); }
+    if(existing){ Object.assign(existing, data); } else { data.id = uid(); stampCreator(data); STATE.itemExitDocs.push(data); }
     saveState(); renderAll();
     toast('تم الحفظ بنجاح');
   }, false);
@@ -2153,7 +2190,7 @@ function setItemDamaged(key, isDamaged){
 function aggregateItemsReportRaw(){
   var projName = function(id){ var p=(STATE.projects||[]).filter(function(x){return x.id===id;})[0]; return p?p.name:'—'; };
   var map = {};
-  (STATE.invoices||[]).forEach(function(inv){
+  visibleRows(STATE.invoices).forEach(function(inv){
     (inv.items||[]).forEach(function(it){
       var k = inv.projectId+'|'+it.name;
       if(!map[k]) map[k] = { project: inv.projectId, name: it.name, qtyIn:0, valueIn:0, qtyOut:0, stageName:'', colLabel:'', band:'', key:k };
@@ -2162,7 +2199,7 @@ function aggregateItemsReportRaw(){
       if(!map[k].stageName && (it.stageName||it.colLabel||it.band)){ map[k].stageName = it.stageName||''; map[k].colLabel = it.colLabel||''; map[k].band = it.band||''; }
     });
   });
-  (STATE.itemExitDocs||[]).forEach(function(ex){
+  visibleRows(STATE.itemExitDocs).forEach(function(ex){
     (ex.items||[]).forEach(function(it){
       var k = ex.projectId+'|'+it.name;
       if(!map[k]) map[k] = { project: ex.projectId, name: it.name, qtyIn:0, valueIn:0, qtyOut:0, stageName:'', colLabel:'', band:'', key:k };
@@ -2214,10 +2251,11 @@ function renderItemsReport(){
 /* ===================== ATTENDANCE ===================== */
 function fillAttendanceEmployeeSelects(){ var sel=document.getElementById('att-quick-emp'); if(sel) sel.innerHTML = employeeOptions(); }
 var PUNCH_LABELS = { checkIn:'تسجيل حضور', breakOut:'خروج للاستراحة', breakIn:'عودة من الاستراحة', checkOut:'تسجيل انصراف' };
-function findOrCreateAttendance(empId, date){
+function findOrCreateAttendance(empId, date, ownerless){
   var existing = STATE.attendance.find(function(a){ return a.empId===empId && a.date===date; });
   if(existing) return existing;
   var rec = {id:uid(), empId:empId, date:date, checkIn:'', breakOut:'', breakIn:'', checkOut:'', status:'حاضر', notes:''};
+  if(!ownerless) stampCreator(rec); // تسجيل الكشك (ownerless=true) يبقى بدون مالك حتى يظل ظاهرًا للجميع
   STATE.attendance.push(rec);
   return rec;
 }
@@ -2246,7 +2284,7 @@ function openAttendanceModal(id){
     var empId = document.getElementById('f-att-emp').value;
     if(!empId){ toast('اختر الموظف','err'); return false; }
     var data = { empId:empId, date:document.getElementById('f-att-date').value||todayISO(), checkIn:document.getElementById('f-att-in').value, breakOut:document.getElementById('f-att-breakout').value, breakIn:document.getElementById('f-att-breakin').value, checkOut:document.getElementById('f-att-out').value, status:document.getElementById('f-att-status').value, notes:document.getElementById('f-att-notes').value.trim() };
-    if(id){ Object.assign(a,data); } else { data.id=uid(); STATE.attendance.push(data); }
+    if(id){ Object.assign(a,data); } else { data.id=uid(); stampCreator(data); STATE.attendance.push(data); }
     saveState(); renderAll(); toast('تم الحفظ بنجاح');
   });
 }
@@ -2265,7 +2303,7 @@ function renderAttendance(){
   var addBtn = document.getElementById('att-add-btn'); if(addBtn) addBtn.style.display = canAdd?'':'none';
   var dateF = (document.getElementById('att-filter-date')||{value:''}).value;
   var q = (document.getElementById('att-search')||{value:''}).value.trim().toLowerCase();
-  var rows = STATE.attendance.filter(function(a){ var emp=employeeById(a.empId); var name=emp?emp.name:''; if(dateF && a.date!==dateF) return false; if(q && name.toLowerCase().indexOf(q)===-1) return false; return true; }).slice().sort(function(x,y){ return (y.date||'').localeCompare(x.date||''); });
+  var rows = visibleRows(STATE.attendance).filter(function(a){ var emp=employeeById(a.empId); var name=emp?emp.name:''; if(dateF && a.date!==dateF) return false; if(q && name.toLowerCase().indexOf(q)===-1) return false; return true; }).slice().sort(function(x,y){ return (y.date||'').localeCompare(x.date||''); });
   var tbody = document.getElementById('attendance-tbody'); if(!tbody) return;
   if(!rows.length){ tbody.innerHTML = '<tr class="empty-row"><td colspan="9">لا توجد تسجيلات حضور مطابقة.</td></tr>'; return; }
   var statusCls = {'حاضر':'badge-green','غائب':'badge-red','إجازة':'badge-gold','متأخر':'badge-gold','مأمورية':'badge-grey'};
@@ -2319,7 +2357,7 @@ function attendanceDefaultRange(){
 }
 function businessDaysInRange(fromISO, toISO){
   var set = {};
-  STATE.attendance.forEach(function(a){ if(a.date>=fromISO && a.date<=toISO) set[a.date]=true; });
+  visibleRows(STATE.attendance).forEach(function(a){ if(a.date>=fromISO && a.date<=toISO) set[a.date]=true; });
   return Object.keys(set).sort();
 }
 function computeEmployeeDay(rec, date, sched){
@@ -2353,7 +2391,7 @@ function computeEmployeeSummary(empId, fromISO, toISO, businessDays, ps){
   var emp = employeeById(empId);
   var sched = scheduleForEmployee(emp, ps);
   var byDate = {};
-  STATE.attendance.forEach(function(a){ if(a.empId===empId && a.date>=fromISO && a.date<=toISO) byDate[a.date]=a; });
+  visibleRows(STATE.attendance).forEach(function(a){ if(a.empId===empId && a.date>=fromISO && a.date<=toISO) byDate[a.date]=a; });
   var days = businessDays.map(function(d){ return computeEmployeeDay(byDate[d], d, sched); });
   var sum = { empId:empId, name:emp?emp.name:'(محذوف)', jobTitle:emp?(emp.jobTitle||'—'):'—', totalDays:days.length, presentDays:0, absentDays:0, leaveDays:0, lateDays:0, lateMinutes:0, earlyMinutes:0, workedMinutes:0, days:days, schedule:sched };
   days.forEach(function(d){
@@ -2405,7 +2443,8 @@ function renderAttendanceReport(){
   var range = currentAttendanceReportRange();
 
   var businessDays = businessDaysInRange(range.from, range.to);
-  var summaries = STATE.employees.map(function(e){ return computeEmployeeSummary(e.id, range.from, range.to, businessDays, ps); });
+  var visEmployees = visibleRows(STATE.employees);
+  var summaries = visEmployees.map(function(e){ return computeEmployeeSummary(e.id, range.from, range.to, businessDays, ps); });
   summaries.sort(function(a,b){ return a.name.localeCompare(b.name,'ar'); });
   attendanceReportCache = { range:range, businessDays:businessDays, summaries:summaries, ps:ps };
 
@@ -2441,8 +2480,8 @@ function renderAttendanceReport(){
   var sel = document.getElementById('arep-emp-select');
   if(sel){
     var keepId = sel.value;
-    sel.innerHTML = '<option value="">— اختر الموظف —</option>'+STATE.employees.slice().sort(function(a,b){return a.name.localeCompare(b.name,'ar');}).map(function(e){ return '<option value="'+e.id+'">'+esc(e.name)+'</option>'; }).join('');
-    if(keepId && STATE.employees.find(function(e){return e.id===keepId;})) sel.value = keepId;
+    sel.innerHTML = '<option value="">— اختر الموظف —</option>'+visEmployees.slice().sort(function(a,b){return a.name.localeCompare(b.name,'ar');}).map(function(e){ return '<option value="'+e.id+'">'+esc(e.name)+'</option>'; }).join('');
+    if(keepId && visEmployees.find(function(e){return e.id===keepId;})) sel.value = keepId;
   }
   renderAttendanceReportDetail();
 }
@@ -2625,7 +2664,7 @@ function openContractModal(id){
     if(!party){ toast('يرجى إدخال اسم الجهة','err'); return false; }
     var hp = document.getElementById('f-con-has-penalty').checked;
     var data = { party:party, company:document.getElementById('f-con-company').value.trim(), expiry:document.getElementById('f-con-expiry').value, renewalValue:document.getElementById('f-con-value').value, hasPenalty:hp, penaltyValue: hp ? document.getElementById('f-con-penalty-value').value : '' };
-    if(id){ Object.assign(c,data); } else { data.id=uid(); STATE.contracts.push(data); }
+    if(id){ Object.assign(c,data); } else { data.id=uid(); stampCreator(data); STATE.contracts.push(data); }
     saveState(); renderAll(); toast('تم الحفظ بنجاح');
   });
 }
@@ -2641,7 +2680,7 @@ function renderContracts(){
   var canDelete = hasDelete('contracts');
   var addBtn = document.getElementById('con-add-btn'); if(addBtn) addBtn.style.display = canAdd?'':'none';
   var q = (document.getElementById('con-search')||{value:''}).value.trim().toLowerCase();
-  var rows = STATE.contracts.filter(function(c){ return !q || (c.party||'').toLowerCase().indexOf(q)>-1 || (c.company||'').toLowerCase().indexOf(q)>-1; });
+  var rows = visibleRows(STATE.contracts).filter(function(c){ return !q || (c.party||'').toLowerCase().indexOf(q)>-1 || (c.company||'').toLowerCase().indexOf(q)>-1; });
   var tbody = document.getElementById('contracts-tbody'); if(!tbody) return;
   if(!rows.length){ tbody.innerHTML = '<tr class="empty-row"><td colspan="8">لا توجد عقود مسجلة بعد.</td></tr>'; return; }
   tbody.innerHTML = rows.map(function(c){
@@ -2677,7 +2716,7 @@ function openResidencyModal(id){
     if(!docType){ toast('يرجى إدخال نوع المستند','err'); return false; }
     var hp = document.getElementById('f-res-has-penalty').checked;
     var data = { empId:empId, docType:docType, value:document.getElementById('f-res-value').value, date:document.getElementById('f-res-date').value||todayISO(), notes:document.getElementById('f-res-notes').value.trim(), hasPenalty:hp, penaltyValue: hp ? document.getElementById('f-res-penalty-value').value : '' };
-    if(id){ Object.assign(r,data); } else { data.id=uid(); STATE.residency.push(data); }
+    if(id){ Object.assign(r,data); } else { data.id=uid(); stampCreator(data); STATE.residency.push(data); }
     saveState(); renderAll(); toast('تم الحفظ بنجاح');
   });
 }
@@ -2693,7 +2732,8 @@ function renderResidency(){
   var canDelete = hasDelete('residency');
   var addBtn = document.getElementById('res-add-btn'); if(addBtn) addBtn.style.display = canAdd?'':'none';
   var q = (document.getElementById('res-search')||{value:''}).value.trim().toLowerCase();
-  var rows = STATE.residency.filter(function(r){ var emp=employeeById(r.empId); var name=emp?emp.name:''; return !q || name.toLowerCase().indexOf(q)>-1 || (r.docType||'').toLowerCase().indexOf(q)>-1; }).slice().sort(function(x,y){ return (y.date||'').localeCompare(x.date||''); });
+  var visRes = visibleRows(STATE.residency);
+  var rows = visRes.filter(function(r){ var emp=employeeById(r.empId); var name=emp?emp.name:''; return !q || name.toLowerCase().indexOf(q)>-1 || (r.docType||'').toLowerCase().indexOf(q)>-1; }).slice().sort(function(x,y){ return (y.date||'').localeCompare(x.date||''); });
   var tbody = document.getElementById('residency-tbody');
   if(tbody){
     if(!rows.length){ tbody.innerHTML = '<tr class="empty-row"><td colspan="7">لا توجد تسجيلات بعد.</td></tr>'; }
@@ -2708,9 +2748,9 @@ function renderResidency(){
   }
   var resStats = document.getElementById('res-stats');
   if(resStats){
-    var total = STATE.residency.reduce(function(sum,r){ return sum+(parseFloat(r.value)||0); },0);
-    var totalPenalty = STATE.residency.reduce(function(sum,r){ return sum+(r.hasPenalty?(parseFloat(r.penaltyValue)||0):0); },0);
-    resStats.innerHTML = '<div class="stat-card"><div class="label">عدد المستندات المسجلة</div><div class="value nums">'+STATE.residency.length+'</div></div>'+
+    var total = visRes.reduce(function(sum,r){ return sum+(parseFloat(r.value)||0); },0);
+    var totalPenalty = visRes.reduce(function(sum,r){ return sum+(r.hasPenalty?(parseFloat(r.penaltyValue)||0):0); },0);
+    resStats.innerHTML = '<div class="stat-card"><div class="label">عدد المستندات المسجلة</div><div class="value nums">'+visRes.length+'</div></div>'+
       '<div class="stat-card gold"><div class="label">إجمالي قيمة التجديدات</div><div class="value nums">'+total.toLocaleString('en-US')+'</div></div>'+
       '<div class="stat-card red"><div class="label">إجمالي قيمة الغرامات</div><div class="value nums">'+totalPenalty.toLocaleString('en-US')+'</div></div>';
   }
@@ -2732,7 +2772,7 @@ function openTicketModal(id){
     if(!empId){ toast('اختر الموظف','err'); return false; }
     if(!last){ toast('يرجى إدخال تاريخ آخر إجازة','err'); return false; }
     var data = { empId:empId, lastVacation:last, cycleYears:document.getElementById('f-tic-cycle').value||1 };
-    if(id){ Object.assign(t,data); } else { data.id=uid(); STATE.tickets.push(data); }
+    if(id){ Object.assign(t,data); } else { data.id=uid(); stampCreator(data); STATE.tickets.push(data); }
     saveState(); renderAll(); toast('تم الحفظ بنجاح');
   });
 }
@@ -2748,7 +2788,7 @@ function renderTickets(){
   var canDelete = hasDelete('tickets');
   var addBtn = document.getElementById('tic-add-btn'); if(addBtn) addBtn.style.display = canAdd?'':'none';
   var q = (document.getElementById('tic-search')||{value:''}).value.trim().toLowerCase();
-  var rows = STATE.tickets.filter(function(t){ var emp=employeeById(t.empId); var name=emp?emp.name:''; return !q || name.toLowerCase().indexOf(q)>-1; });
+  var rows = visibleRows(STATE.tickets).filter(function(t){ var emp=employeeById(t.empId); var name=emp?emp.name:''; return !q || name.toLowerCase().indexOf(q)>-1; });
   var tbody = document.getElementById('tickets-tbody'); if(!tbody) return;
   if(!rows.length){ tbody.innerHTML = '<tr class="empty-row"><td colspan="6">لا توجد تسجيلات بعد.</td></tr>'; return; }
   tbody.innerHTML = rows.map(function(t){
@@ -2772,7 +2812,7 @@ function currentVatRange(){
 }
 var vatReportCache = null;
 function computeVatData(range){
-  var taxedInvoices = (STATE.invoices||[]).filter(function(inv){
+  var taxedInvoices = visibleRows(STATE.invoices).filter(function(inv){
     return inv.kind==='invoice' && inv.date>=range.from && inv.date<=range.to && (Number(inv.taxTotal)||0) > 0;
   }).sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); });
 
@@ -2930,13 +2970,14 @@ function renderDashboardModules(alertCounts){
   }).join('');
 }
 function renderDashboard(){
-  var todayAtt = STATE.attendance.filter(function(a){ return a.date===todayISO() && a.checkIn; }).length;
-  var resAlerts = STATE.employees.map(function(e){ return {e:e, st:residencyStatus(e.residencyExpiry), d:daysUntil(e.residencyExpiry)}; }).filter(function(x){ return x.st.cls==='badge-red'||x.st.cls==='badge-gold'; }).sort(function(a,b){ return (a.d==null?9999:a.d)-(b.d==null?9999:b.d); });
-  var conAlerts = STATE.contracts.map(function(c){ return {c:c, st:contractStatus(c.expiry), d:daysUntil(c.expiry)}; }).filter(function(x){ return x.st.cls!=='badge-green'; }).sort(function(a,b){ return (a.d==null?9999:a.d)-(b.d==null?9999:b.d); });
-  var ticAlerts = STATE.tickets.map(function(t){ var nd=addYearsISO(t.lastVacation,t.cycleYears); return {t:t, nd:nd, st:ticketStatus(nd), d:daysUntil(nd)}; }).filter(function(x){ return x.st.cls!=='badge-green'; }).sort(function(a,b){ return (a.d==null?9999:a.d)-(b.d==null?9999:b.d); });
+  var visEmployeesD = visibleRows(STATE.employees);
+  var todayAtt = visibleRows(STATE.attendance).filter(function(a){ return a.date===todayISO() && a.checkIn; }).length;
+  var resAlerts = visEmployeesD.map(function(e){ return {e:e, st:residencyStatus(e.residencyExpiry), d:daysUntil(e.residencyExpiry)}; }).filter(function(x){ return x.st.cls==='badge-red'||x.st.cls==='badge-gold'; }).sort(function(a,b){ return (a.d==null?9999:a.d)-(b.d==null?9999:b.d); });
+  var conAlerts = visibleRows(STATE.contracts).map(function(c){ return {c:c, st:contractStatus(c.expiry), d:daysUntil(c.expiry)}; }).filter(function(x){ return x.st.cls!=='badge-green'; }).sort(function(a,b){ return (a.d==null?9999:a.d)-(b.d==null?9999:b.d); });
+  var ticAlerts = visibleRows(STATE.tickets).map(function(t){ var nd=addYearsISO(t.lastVacation,t.cycleYears); return {t:t, nd:nd, st:ticketStatus(nd), d:daysUntil(nd)}; }).filter(function(x){ return x.st.cls!=='badge-green'; }).sort(function(a,b){ return (a.d==null?9999:a.d)-(b.d==null?9999:b.d); });
   renderDashboardModules({ residency:resAlerts.length, contracts:conAlerts.length, tickets:ticAlerts.length });
   document.getElementById('dash-stats').innerHTML =
-    '<div class="stat-card"><div class="label">إجمالي الموظفين</div><div class="value nums">'+STATE.employees.length+'</div></div>'+
+    '<div class="stat-card"><div class="label">إجمالي الموظفين</div><div class="value nums">'+visEmployeesD.length+'</div></div>'+
     '<div class="stat-card"><div class="label">حضور اليوم</div><div class="value nums">'+todayAtt+'</div></div>'+
     '<div class="stat-card red"><div class="label">تنبيهات إقامة</div><div class="value nums">'+resAlerts.length+'</div></div>'+
     '<div class="stat-card gold"><div class="label">عقود تحتاج متابعة</div><div class="value nums">'+conAlerts.length+'</div></div>'+
@@ -3040,16 +3081,16 @@ function exportAllExcel(){
 /* ===================== REPORTS ENGINE (PDF / Word) ===================== */
 var REPORT_META = {
   suppliers: { title:'تقرير الموردين', rowsFn:function(){
-    return STATE.suppliers.map(function(s){ return {'اسم المورد':s.name,'رقم الهاتف':s.phone||'—','الرقم الضريبي':formatTaxNumber(s.taxNumber)||'—','ملاحظات':s.notes||'—'}; });
+    return visibleRows(STATE.suppliers).map(function(s){ return {'اسم المورد':s.name,'رقم الهاتف':s.phone||'—','الرقم الضريبي':formatTaxNumber(s.taxNumber)||'—','ملاحظات':s.notes||'—'}; });
   }},
   projects: { title:'تقرير المشاريع', rowsFn:function(){
-    return STATE.projects.map(function(p){ return {'اسم المشروع':p.name,'الجهة / العميل':p.client||'—','ملاحظات':p.notes||'—'}; });
+    return visibleRows(STATE.projects).map(function(p){ return {'اسم المشروع':p.name,'الجهة / العميل':p.client||'—','ملاحظات':p.notes||'—'}; });
   }},
   custodies: { title:'تقرير العُهد', rowsFn:function(){
-    return STATE.custodies.map(function(c){ return {'رقم العُهدة':c.number,'المشروع':genericRefLabel({ref:'projects'},c.projectId),'المستلم':c.holderName||'—','المبلغ':fmt(c.amount),'التاريخ':formatDate(c.date)}; });
+    return visibleRows(STATE.custodies).map(function(c){ return {'رقم العُهدة':c.number,'المشروع':genericRefLabel({ref:'projects'},c.projectId),'المستلم':c.holderName||'—','المبلغ':fmt(c.amount),'التاريخ':formatDate(c.date)}; });
   }},
   invoices: { title:'تقرير الفواتير والمستندات', rowsFn:function(){
-    return STATE.invoices.map(function(inv){
+    return visibleRows(STATE.invoices).map(function(inv){
       var sup=(STATE.suppliers||[]).filter(function(s){return s.id===inv.supplierId;})[0];
       var proj=(STATE.projects||[]).filter(function(p){return p.id===inv.projectId;})[0];
       var bandTxt = (inv.items||[]).filter(function(it){ return it.stageName||it.colLabel||it.band; })
@@ -3058,35 +3099,35 @@ var REPORT_META = {
     });
   }},
   custodySettlements: { title:'تقرير تسوية العُهدة', rowsFn:function(){
-    return STATE.custodySettlements.map(function(c){ return {'العُهدة':genericRefLabel({ref:'custodies',refLabel:'number'},c.custodyId),'التاريخ':formatDate(c.date),'المبلغ المُسوّى':fmt(c.amount),'ملاحظات':c.notes||'—'}; });
+    return visibleRows(STATE.custodySettlements).map(function(c){ return {'العُهدة':genericRefLabel({ref:'custodies',refLabel:'number'},c.custodyId),'التاريخ':formatDate(c.date),'المبلغ المُسوّى':fmt(c.amount),'ملاحظات':c.notes||'—'}; });
   }},
   invoicePayments: { title:'تقرير سداد الفواتير', rowsFn:function(){
-    return STATE.invoicePayments.map(function(p){ return {'الفاتورة':genericRefLabel({ref:'invoices',refLabel:'number'},p.invoiceId),'التاريخ':formatDate(p.date),'المبلغ المدفوع':fmt(p.amount),'طريقة السداد':p.method||'—'}; });
+    return visibleRows(STATE.invoicePayments).map(function(p){ return {'الفاتورة':genericRefLabel({ref:'invoices',refLabel:'number'},p.invoiceId),'التاريخ':formatDate(p.date),'المبلغ المدفوع':fmt(p.amount),'طريقة السداد':p.method||'—'}; });
   }},
   contractorPayments: { title:'تقرير دفعات المقاولين', rowsFn:function(){
-    return STATE.contractorPayments.map(function(c){ return {'اسم المقاول':c.contractorName,'المشروع':genericRefLabel({ref:'projects'},c.projectId),'المبلغ':fmt(c.amount),'التاريخ':formatDate(c.date)}; });
+    return visibleRows(STATE.contractorPayments).map(function(c){ return {'اسم المقاول':c.contractorName,'المشروع':genericRefLabel({ref:'projects'},c.projectId),'المبلغ':fmt(c.amount),'التاريخ':formatDate(c.date)}; });
   }},
   itemExitDocs: { title:'تقرير مستندات خروج الأصناف', rowsFn:function(){
-    return STATE.itemExitDocs.map(function(d){
+    return visibleRows(STATE.itemExitDocs).map(function(d){
       var itemsTxt = (d.items||[]).map(function(i){ return i.name+' ('+i.qty+')'; }).join('، ');
       return {'المشروع':genericRefLabel({ref:'projects'},d.projectId),'الأصناف':itemsTxt,'الجهة المستلمة':d.destination||'—','التاريخ':formatDate(d.date)};
     });
   }},
   itemsReport: { title:'تقرير الأصناف', rowsFn:function(){ return buildItemsReportRows(); } },
   employees: { title:'تقرير بيانات الموظفين', rowsFn:function(){
-    return STATE.employees.map(function(e){ var st=residencyStatus(e.residencyExpiry); return {'اسم الموظف':e.name,'الشركة':e.company,'الوظيفة':e.jobTitle,'المهنة':e.profession,'المؤهل':e.qualification,'رقم البطاقة':e.idCard,'رقم الجواز':e.passport,'الهاتف':e.phone,'انتهاء الإقامة':formatDate(e.residencyExpiry),'الحالة':st.label}; });
+    return visibleRows(STATE.employees).map(function(e){ var st=residencyStatus(e.residencyExpiry); return {'اسم الموظف':e.name,'الشركة':e.company,'الوظيفة':e.jobTitle,'المهنة':e.profession,'المؤهل':e.qualification,'رقم البطاقة':e.idCard,'رقم الجواز':e.passport,'الهاتف':e.phone,'انتهاء الإقامة':formatDate(e.residencyExpiry),'الحالة':st.label}; });
   }},
   attendance: { title:'تقرير الحضور والانصراف', rowsFn:function(){
-    return STATE.attendance.map(function(a){ var emp=employeeById(a.empId); return {'الموظف':emp?emp.name:'(محذوف)','التاريخ':formatDate(a.date),'وقت الحضور':a.checkIn||'—','خروج للاستراحة':a.breakOut||'—','عودة من الاستراحة':a.breakIn||'—','وقت الانصراف':a.checkOut||'—','الحالة':a.status,'ملاحظات':a.notes||'—'}; });
+    return visibleRows(STATE.attendance).map(function(a){ var emp=employeeById(a.empId); return {'الموظف':emp?emp.name:'(محذوف)','التاريخ':formatDate(a.date),'وقت الحضور':a.checkIn||'—','خروج للاستراحة':a.breakOut||'—','عودة من الاستراحة':a.breakIn||'—','وقت الانصراف':a.checkOut||'—','الحالة':a.status,'ملاحظات':a.notes||'—'}; });
   }},
   contracts: { title:'تقرير العقود', rowsFn:function(){
-    return STATE.contracts.map(function(c){ var st=contractStatus(c.expiry); return {'الجهة الخاصة بالعقد':c.party,'الشركة الخاصة بالعقد':c.company,'تاريخ الانتهاء':formatDate(c.expiry),'المتبقي':remainingLabel(c.expiry),'قيمة التجديد':(c.renewalValue!==''&&c.renewalValue!==undefined&&c.renewalValue!==null)?Number(c.renewalValue).toLocaleString('en-US'):'—','يوجد غرامة':c.hasPenalty?'نعم':'لا','قيمة الغرامة':c.hasPenalty?((c.penaltyValue!==''&&c.penaltyValue!==undefined&&c.penaltyValue!==null)?Number(c.penaltyValue).toLocaleString('en-US'):'0'):'—','الحالة':st.label}; });
+    return visibleRows(STATE.contracts).map(function(c){ var st=contractStatus(c.expiry); return {'الجهة الخاصة بالعقد':c.party,'الشركة الخاصة بالعقد':c.company,'تاريخ الانتهاء':formatDate(c.expiry),'المتبقي':remainingLabel(c.expiry),'قيمة التجديد':(c.renewalValue!==''&&c.renewalValue!==undefined&&c.renewalValue!==null)?Number(c.renewalValue).toLocaleString('en-US'):'—','يوجد غرامة':c.hasPenalty?'نعم':'لا','قيمة الغرامة':c.hasPenalty?((c.penaltyValue!==''&&c.penaltyValue!==undefined&&c.penaltyValue!==null)?Number(c.penaltyValue).toLocaleString('en-US'):'0'):'—','الحالة':st.label}; });
   }},
   residency: { title:'تقرير تجديد الإقامات', rowsFn:function(){
-    return STATE.residency.map(function(r){ var emp=employeeById(r.empId); return {'الموظف':emp?emp.name:'(محذوف)','نوع المستند':r.docType,'القيمة':(r.value!==''&&r.value!==undefined&&r.value!==null)?Number(r.value).toLocaleString('en-US'):'—','يوجد غرامة':r.hasPenalty?'نعم':'لا','قيمة الغرامة':r.hasPenalty?((r.penaltyValue!==''&&r.penaltyValue!==undefined&&r.penaltyValue!==null)?Number(r.penaltyValue).toLocaleString('en-US'):'0'):'—','التاريخ':formatDate(r.date),'ملاحظات':r.notes||'—'}; });
+    return visibleRows(STATE.residency).map(function(r){ var emp=employeeById(r.empId); return {'الموظف':emp?emp.name:'(محذوف)','نوع المستند':r.docType,'القيمة':(r.value!==''&&r.value!==undefined&&r.value!==null)?Number(r.value).toLocaleString('en-US'):'—','يوجد غرامة':r.hasPenalty?'نعم':'لا','قيمة الغرامة':r.hasPenalty?((r.penaltyValue!==''&&r.penaltyValue!==undefined&&r.penaltyValue!==null)?Number(r.penaltyValue).toLocaleString('en-US'):'0'):'—','التاريخ':formatDate(r.date),'ملاحظات':r.notes||'—'}; });
   }},
   tickets: { title:'تقرير تذاكر الإجازات', rowsFn:function(){
-    return STATE.tickets.map(function(t){ var emp=employeeById(t.empId); var nd=addYearsISO(t.lastVacation,t.cycleYears); var st=ticketStatus(nd); return {'الموظف':emp?emp.name:'(محذوف)','تاريخ آخر إجازة':formatDate(t.lastVacation),'الدورة (سنوات)':t.cycleYears,'تاريخ الاستحقاق القادم':formatDate(nd),'الحالة':st.label}; });
+    return visibleRows(STATE.tickets).map(function(t){ var emp=employeeById(t.empId); var nd=addYearsISO(t.lastVacation,t.cycleYears); var st=ticketStatus(nd); return {'الموظف':emp?emp.name:'(محذوف)','تاريخ آخر إجازة':formatDate(t.lastVacation),'الدورة (سنوات)':t.cycleYears,'تاريخ الاستحقاق القادم':formatDate(nd),'الحالة':st.label}; });
   }},
   itemTabs: { title:'تقرير تبويب البنود', rowsFn:function(){
     var rows = [];
@@ -3314,7 +3355,7 @@ function recordKioskPunch(empId){
       }
     }
   }
-  var rec = findOrCreateAttendance(empId, todayISO());
+  var rec = findOrCreateAttendance(empId, todayISO(), true);
   rec[stage] = nowHM();
   rec.notes = rec.notes ? rec.notes : 'تسجيل عبر كشك البصمة';
   saveState();
@@ -3377,7 +3418,7 @@ async function startKioskMode(){
   document.getElementById('app-screen').style.display = 'none';
   document.getElementById('kiosk-screen').style.display = 'flex';
   var camWrap = document.getElementById('kiosk-cam-wrap');
-  if(camWrap) camWrap.innerHTML = '<div class="kiosk-cam-placeholder">📍</div>';
+  if(camWrap) camWrap.innerHTML = '<div class="kiosk-cam-placeholder">👤</div>';
   kioskSetResult(''); kioskSetRangeBadge(''); kioskSetRetry('');
   kioskState.running = true;
 
@@ -3391,54 +3432,30 @@ async function startKioskMode(){
     }
   }, 1000);
 
+  // نبدأ بالتعرف على الوجه على طول من غير أي انتظار لتحديد الموقع.
+  // لو التحقق من الموقع مفعّل، هيحصل بعد تأكيد الموظف لهويته مباشرة (خطوة مطابقة سريعة قبل تسجيل البصمة).
   var k = STATE.settings && STATE.settings.kiosk;
-  if(!k || k.lat==null || k.lng==null){
+  if(k && k.requireLocation && (k.lat==null || k.lng==null)){
     kioskSetStatus('لم يتم ضبط موقع المكتب بعد', 'bad', 'يرجى مراجعة الإدارة لضبط الإعدادات أولاً من شاشة «إعدادات كشك البصمة»');
     return;
   }
-
-  kioskSetStatus('جارٍ التحقق من موقعك...', '', '');
-  if(!navigator.geolocation){
-    kioskSetStatus('جهازك لا يدعم تحديد الموقع', 'bad', '');
-    return;
-  }
-  try{
-    var pos = await getKioskPositionFast();
-    var dist = haversineMeters(pos.coords.latitude, pos.coords.longitude, k.lat, k.lng);
-    if(dist > k.radius){
-      kioskSetStatus('أنت خارج نطاق المكتب', 'bad', 'المسافة الحالية عن المكتب: تقريبًا '+Math.round(dist)+' متر (المسموح '+k.radius+' متر)');
-      kioskSetRangeBadge('<span class="kiosk-badge-range out">خارج النطاق ✕</span>');
-      kioskSetRetry('<button class="kiosk-retry-btn" onclick="startKioskMode()">إعادة المحاولة</button>');
-      return;
-    }
-    kioskSetRangeBadge('<span class="kiosk-badge-range in">داخل نطاق المكتب ✓</span>');
-    kioskSetRetry('');
-    await kioskInitRecognition();
-  }catch(err){
-    kioskSetStatus('تعذر تحديد موقعك', 'bad', (err && err.message) || 'يرجى السماح للمتصفح بالوصول إلى الموقع الجغرافي');
-    kioskSetRetry('<button class="kiosk-retry-btn" onclick="startKioskMode()">إعادة المحاولة</button>');
-  }
+  await kioskInitRecognition();
 }
 
-/* تحديد الموقع بأسرع طريقة ممكنة: نجرب أولًا موقع مخزّن حديثًا (فوري)،
-   ثم دقة عالية لفترة قصيرة، وإن تأخرت أو فشلت ننتقل لدقة أقل (أسرع عادةً عبر الشبكة)
-   بدل الانتظار حتى 20 ثانية كما كان سابقًا */
+/* تحديد الموقع بأسرع طريقة ممكنة: بنطلق طلبَي تحديد موقع بالتوازي (دقة عالية ودقة عادية
+   مع قبول قراءة مخزّنة حديثًا)، ونأخذ أول رد ناجح يوصل — بدل انتظار فشل الأول قبل تجربة التاني،
+   فبتوصل النتيجة أسرع بكتير في الغالب. */
 function getKioskPositionFast(){
   return new Promise(function(resolve, reject){
     var settled = false;
-    function tryLowAccuracy(){
-      navigator.geolocation.getCurrentPosition(function(pos){
-        if(settled) return; settled = true; resolve(pos);
-      }, function(err){
-        if(settled) return; settled = true; reject(err);
-      }, {enableHighAccuracy:false, timeout:10000, maximumAge:30000});
+    var failCount = 0;
+    function onOk(pos){ if(settled) return; settled = true; resolve(pos); }
+    function onErr(err){
+      failCount++;
+      if(!settled && failCount>=2){ settled = true; reject(err); }
     }
-    navigator.geolocation.getCurrentPosition(function(pos){
-      if(settled) return; settled = true; resolve(pos);
-    }, function(){
-      if(settled) return;
-      tryLowAccuracy();
-    }, {enableHighAccuracy:true, timeout:7000, maximumAge:15000});
+    navigator.geolocation.getCurrentPosition(onOk, onErr, {enableHighAccuracy:true, timeout:6000, maximumAge:20000});
+    navigator.geolocation.getCurrentPosition(onOk, onErr, {enableHighAccuracy:false, timeout:6000, maximumAge:60000});
   });
 }
 
@@ -3564,9 +3581,39 @@ function kioskClearConfirmUi(){
 }
 
 async function kioskConfirmYes(empId){
-  kioskClearConfirmUi();
-  kioskState.lastPunch[empId] = Date.now();
+  if(kioskState.confirmTimer){ clearTimeout(kioskState.confirmTimer); kioskState.confirmTimer = null; }
+  kioskState.awaitingConfirm = true; // نفضل قافلين حلقة المسح لحد ما نخلّص مطابقة الموقع وتسجيل البصمة
   kioskSetResult('');
+
+  var k = STATE.settings && STATE.settings.kiosk;
+  if(k && k.requireLocation && k.lat!=null && k.lng!=null){
+    kioskSetStatus('جارٍ مطابقة موقعك...', '', '');
+    kioskSetRangeBadge(''); kioskSetRetry('');
+    if(!navigator.geolocation){
+      kioskSetStatus('جهازك لا يدعم تحديد الموقع', 'bad', '');
+      kioskSetRetry('<button class="kiosk-retry-btn" onclick="kioskConfirmYes(\''+empId+'\')">إعادة المحاولة</button>');
+      return;
+    }
+    try{
+      var pos = await getKioskPositionFast();
+      var dist = haversineMeters(pos.coords.latitude, pos.coords.longitude, k.lat, k.lng);
+      if(dist > k.radius){
+        kioskSetStatus('أنت خارج نطاق المكتب', 'bad', 'المسافة الحالية عن المكتب: تقريبًا '+Math.round(dist)+' متر (المسموح '+k.radius+' متر)');
+        kioskSetRangeBadge('<span class="kiosk-badge-range out">خارج النطاق ✕</span>');
+        kioskSetRetry('<button class="kiosk-retry-btn" onclick="kioskConfirmYes(\''+empId+'\')">إعادة المحاولة</button>');
+        return;
+      }
+      kioskSetRangeBadge('<span class="kiosk-badge-range in">داخل نطاق المكتب ✓</span>');
+      kioskSetRetry('');
+    }catch(err){
+      kioskSetStatus('تعذر تحديد موقعك', 'bad', (err && err.message) || 'يرجى السماح للمتصفح بالوصول إلى الموقع الجغرافي');
+      kioskSetRetry('<button class="kiosk-retry-btn" onclick="kioskConfirmYes(\''+empId+'\')">إعادة المحاولة</button>');
+      return;
+    }
+  }
+
+  kioskState.streakLabel = null; kioskState.streakCount = 0;
+  kioskState.lastPunch[empId] = Date.now();
   await kioskHandleMatch(empId);
 }
 
