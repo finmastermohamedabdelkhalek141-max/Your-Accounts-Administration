@@ -1724,9 +1724,11 @@ function renderInvoices(){
   var rows = visibleRows(STATE.invoices).slice().reverse();
   el.innerHTML =
     '<div class="topbar"><div><h2>الفواتير والمستندات</h2><div class="desc">تسجيل فواتير وعروض أسعار الموردين وربطها بالمشاريع والعُهد</div></div></div>'+
+    '<input type="file" id="ai-invoice-file-input" accept="image/*,application/pdf" style="display:none" onchange="handleAIInvoiceFile(event)">'+
     '<div class="panel"><div class="panel-head"><h3>السجل</h3><div class="panel-toolbar">'+
       (canReports?('<button class="btn btn-outline btn-sm" onclick="exportScreenPDF(\'invoices\')">تصدير PDF</button>'+
       '<button class="btn btn-outline btn-sm" onclick="exportScreenWord(\'invoices\')">تصدير Word</button>'):'')+
+      (canAdd?'<button class="btn btn-outline btn-sm" id="ai-invoice-read-btn" onclick="triggerAIInvoiceRead()">📷 قراءة فاتورة بالذكاء الاصطناعي</button>':'')+
       (canAdd?'<button class="btn btn-gold btn-sm" onclick="openInvoiceModal()">+ مستند جديد</button>':'')+
     '</div></div><div class="panel-body table-wrap">'+invoicesTableHtml(rows)+'</div></div>';
 }
@@ -1736,20 +1738,127 @@ function deleteInvoice(id){
   STATE.invoices = STATE.invoices.filter(function(v){ return v.id!==id; });
   saveState(); renderAll(); toast('تم الحذف');
 }
-function openInvoiceModal(id){
+/* ===================== قارئ الفواتير بالذكاء الاصطناعي ===================== */
+var AI_INVOICE_MODEL = 'claude-sonnet-4-6';
+function setAIInvoiceBtnBusy(busy){
+  var btn = document.getElementById('ai-invoice-read-btn');
+  if(!btn) return;
+  btn.disabled = !!busy;
+  btn.textContent = busy ? 'جارٍ القراءة...' : '📷 قراءة فاتورة بالذكاء الاصطناعي';
+}
+function triggerAIInvoiceRead(){
+  if(!hasAdd('invoices')){ toast('لا تملك صلاحية إضافة فواتير','err'); return; }
+  var input = document.getElementById('ai-invoice-file-input');
+  if(input){ input.value = ''; input.click(); }
+}
+function fileToBase64(file){
+  return new Promise(function(resolve, reject){
+    var reader = new FileReader();
+    reader.onload = function(){ resolve(String(reader.result).split(',')[1]||''); };
+    reader.onerror = function(){ reject(new Error('read-failed')); };
+    reader.readAsDataURL(file);
+  });
+}
+function handleAIInvoiceFile(e){
+  var file = e.target.files && e.target.files[0];
+  if(!file) return;
+  var isPdf = file.type==='application/pdf' || /\.pdf$/i.test(file.name);
+  var isImage = /^image\//.test(file.type);
+  if(!isPdf && !isImage){ toast('الرجاء اختيار صورة أو ملف PDF للفاتورة','err'); return; }
+  if(file.size > 15*1024*1024){ toast('حجم الملف كبير جدًا (الحد الأقصى 15 ميجابايت)','err'); return; }
+  setAIInvoiceBtnBusy(true);
+  toast('جارٍ قراءة الفاتورة بالذكاء الاصطناعي...');
+  fileToBase64(file).then(function(b64){
+    return callAIInvoiceExtractor(b64, isPdf ? 'application/pdf' : (file.type||'image/jpeg'), isPdf);
+  }).then(function(data){
+    setAIInvoiceBtnBusy(false);
+    if(!data){ toast('تعذّر استخراج بيانات الفاتورة، حاول بصورة أوضح','err'); return; }
+    resolveSupplierAndOpenInvoice(data);
+  }).catch(function(err){
+    setAIInvoiceBtnBusy(false);
+    console.error(err);
+    toast('حدث خطأ أثناء قراءة الفاتورة، حاول مرة أخرى','err');
+  });
+}
+function callAIInvoiceExtractor(base64, mediaType, isPdf){
+  var systemPrompt = 'أنت مساعد متخصص في استخراج بيانات الفواتير. اقرأ الفاتورة المرفقة (قد تكون بالعربية أو الإنجليزية) واستخرج البيانات بدقة شديدة. أعد الرد بصيغة JSON صِرف فقط، بدون أي نص إضافي أو شرح أو علامات Markdown، وفق الشكل التالي بالضبط:\n{"supplierName":"","supplierPhone":"","supplierTaxNumber":"","invoiceNumber":"","invoiceDate":"YYYY-MM-DD","items":[{"name":"","qty":0,"price":0}],"subtotal":0,"discount":0,"taxRate":0,"taxTotal":0,"total":0}\nملاحظات: الحقول الرقمية أرقام فقط (استخدم 0 إن لم تجدها). التاريخ بصيغة YYYY-MM-DD وإن لم يوجد اترك السلسلة فارغة. الرقم الضريبي أرقام فقط بدون بادئة OM أو أي رمز. سعر الصنف (price) هو سعر الوحدة وليس إجمالي السطر. إن لم يوجد حقل نصي اتركه فارغًا. لا تُضف أي حقول أخرى غير المذكورة.';
+  return fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: AI_INVOICE_MODEL,
+      max_tokens: 1500,
+      system: systemPrompt,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: isPdf?'document':'image', source: { type:'base64', media_type: mediaType, data: base64 } },
+          { type: 'text', text: 'استخرج بيانات هذه الفاتورة وفق الصيغة المطلوبة، أعد JSON فقط.' }
+        ]
+      }]
+    })
+  }).then(function(res){ return res.json(); }).then(function(data){
+    var text = ((data && data.content) || []).map(function(b){ return b.type==='text'?b.text:''; }).join('\n').trim();
+    text = text.replace(/```json/gi,'').replace(/```/g,'').trim();
+    try { return JSON.parse(text); } catch(err){ console.error('AI invoice JSON parse failed', text, err); return null; }
+  });
+}
+function normalizeSupplierName(n){ return (n||'').toString().trim().toLowerCase().replace(/\s+/g,' '); }
+function resolveSupplierAndOpenInvoice(data){
+  var prefill = {
+    number: (data.invoiceNumber||'').toString().trim(),
+    date: (data.invoiceDate||'').toString().trim(),
+    discount: Number(data.discount)||0,
+    taxRate: (data.taxRate!=null && data.taxRate!=='') ? Number(data.taxRate) : 5,
+    taxTotal: Number(data.taxTotal)||0,
+    total: Number(data.total)||0,
+    items: (Array.isArray(data.items) && data.items.length) ? data.items.map(function(it){
+      return { name:(it.name||'').toString().trim(), qty:Number(it.qty)||1, price:Number(it.price)||0 };
+    }).filter(function(it){ return it.name; }) : [],
+    supplierId: ''
+  };
+  var taxDigits = taxDigitsOnly(data.supplierTaxNumber);
+  var nameNorm = normalizeSupplierName(data.supplierName);
+  var match = null;
+  if(taxDigits){ match = (STATE.suppliers||[]).find(function(s){ return taxDigitsOnly(s.taxNumber)===taxDigits; }); }
+  if(!match && nameNorm){ match = (STATE.suppliers||[]).find(function(s){ return normalizeSupplierName(s.name)===nameNorm; }); }
+  if(match){
+    prefill.supplierId = match.id;
+    var changed = false;
+    if(!match.phone && data.supplierPhone){ match.phone = String(data.supplierPhone).trim(); changed = true; }
+    if(!match.taxNumber && taxDigits){ match.taxNumber = formatTaxNumber(taxDigits); changed = true; }
+    if(changed){ saveState(); toast('تم تحديث بيانات المورد "'+match.name+'" تلقائيًا'); }
+  } else if(nameNorm && hasAdd('suppliers')){
+    var newSup = { id:uid(), name:(data.supplierName||'').toString().trim(), phone:(data.supplierPhone||'').toString().trim(), taxNumber: taxDigits?formatTaxNumber(taxDigits):'', notes:'تمت إضافته تلقائيًا بواسطة قارئ الفواتير' };
+    stampCreator(newSup);
+    STATE.suppliers.push(newSup);
+    saveState();
+    prefill.supplierId = newSup.id;
+    toast('تم تسجيل مورد جديد تلقائيًا: '+newSup.name);
+  } else if(nameNorm){
+    toast('تم استخراج بيانات الفاتورة، لكن لا تملك صلاحية إضافة موردين جدد — اختر موردًا يدويًا','warn');
+  } else {
+    toast('لم يتم التعرف على اسم المورد بوضوح، يرجى اختياره يدويًا','warn');
+  }
+  renderSuppliers();
+  toast('راجع البيانات المستخرجة واختر المشروع قبل الحفظ','warn');
+  openInvoiceModal(null, prefill);
+}
+function openInvoiceModal(id, aiPrefill){
   if(id && !hasEdit('invoices')){ toast('لا تملك صلاحية التعديل','err'); return; }
   if(!id && !hasAdd('invoices')){ toast('لا تملك صلاحية الإضافة','err'); return; }
   var existing = id ? invoiceById(id) : null;
   var suppliers = STATE.suppliers || [];
   var projects = STATE.projects || [];
   var custodies = STATE.custodies || [];
+  var preSupplierId = existing ? existing.supplierId : (aiPrefill && aiPrefill.supplierId ? aiPrefill.supplierId : '');
 
-  var invItems = existing ? (existing.items||[]).map(function(it){ return { name:it.name, qty:Number(it.qty)||0, price:Number(it.price)||0, tax:Number(it.tax)||0, taxManual:false, stageId:it.stageId||'', stageName:it.stageName||'', colId:it.colId||'', colLabel:it.colLabel||'', band:it.band||'' }; }) : [{ name:'', qty:1, price:0, tax:0, taxManual:false, stageId:'', stageName:'', colId:'', colLabel:'', band:'' }];
+  var invItems = existing ? (existing.items||[]).map(function(it){ return { name:it.name, qty:Number(it.qty)||0, price:Number(it.price)||0, tax:Number(it.tax)||0, taxManual:false, stageId:it.stageId||'', stageName:it.stageName||'', colId:it.colId||'', colLabel:it.colLabel||'', band:it.band||'' }; }) : ((aiPrefill && aiPrefill.items && aiPrefill.items.length) ? aiPrefill.items.map(function(it){ return { name:it.name, qty:Number(it.qty)||0, price:Number(it.price)||0, tax:0, taxManual:false, stageId:'', stageName:'', colId:'', colLabel:'', band:'' }; }) : [{ name:'', qty:1, price:0, tax:0, taxManual:false, stageId:'', stageName:'', colId:'', colLabel:'', band:'' }]);
   var hasTax = false;
-  var discount = existing ? (Number(existing.discount)||0) : 0;
-  var taxRate = existing && existing.taxRate!=null && existing.taxRate!=='' ? Number(existing.taxRate) : 5;
-  var taxTotalValue = existing ? (Number(existing.taxTotal)||0) : 0;
-  var netTotalValue = existing ? (Number(existing.total)||0) : 0;
+  var discount = existing ? (Number(existing.discount)||0) : (aiPrefill ? (Number(aiPrefill.discount)||0) : 0);
+  var taxRate = existing && existing.taxRate!=null && existing.taxRate!=='' ? Number(existing.taxRate) : (aiPrefill && aiPrefill.taxRate!=null ? Number(aiPrefill.taxRate) : 5);
+  var taxTotalValue = existing ? (Number(existing.taxTotal)||0) : (aiPrefill ? (Number(aiPrefill.taxTotal)||0) : 0);
+  var netTotalValue = existing ? (Number(existing.total)||0) : (aiPrefill ? (Number(aiPrefill.total)||0) : 0);
   var taxTotalManual = false;
   var netManual = false;
   var amountPaidManual = false;
@@ -1776,10 +1885,10 @@ function openInvoiceModal(id){
     '<div class="field" style="margin-bottom:6px;"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;"><input type="checkbox" id="f-inv-paid" style="width:18px;height:18px;"'+(isPaidInitial?' checked':'')+'> هل هي مدفوعة؟</label></div>'+
     '<div class="grid grid-2">'+
       '<div class="field"><label>المورد</label><select id="f-inv-supplier"><option value="">— اختر مورد —</option>'+
-        suppliers.map(function(s){ return '<option value="'+esc(s.id)+'"'+(existing&&existing.supplierId===s.id?' selected':'')+'>'+esc(s.name)+'</option>'; }).join('')+
+        suppliers.map(function(s){ return '<option value="'+esc(s.id)+'"'+(preSupplierId===s.id?' selected':'')+'>'+esc(s.name)+'</option>'; }).join('')+
       '</select></div>'+
-      '<div class="field"><label>رقم الفاتورة</label><input id="f-inv-number" class="nums" value="'+esc(existing?existing.number:'')+'"></div>'+
-      '<div class="field"><label id="f-inv-date-label">'+(isPaidInitial?'تاريخ الفاتورة (وتاريخ الدفع)':'تاريخ الفاتورة (تاريخ الاستحقاق)')+'</label><input id="f-inv-date" type="date" value="'+esc(existing?existing.date:todayISO())+'"></div>'+
+      '<div class="field"><label>رقم الفاتورة</label><input id="f-inv-number" class="nums" value="'+esc(existing?existing.number:(aiPrefill&&aiPrefill.number?aiPrefill.number:''))+'"></div>'+
+      '<div class="field"><label id="f-inv-date-label">'+(isPaidInitial?'تاريخ الفاتورة (وتاريخ الدفع)':'تاريخ الفاتورة (تاريخ الاستحقاق)')+'</label><input id="f-inv-date" type="date" value="'+esc(existing?existing.date:(aiPrefill&&aiPrefill.date?aiPrefill.date:todayISO()))+'"></div>'+
       '<div class="field" id="f-inv-paymentdate-wrap" style="display:'+(isPaidInitial?'none':'')+';"><label>تاريخ الدفع</label><input id="f-inv-payment-date" type="date" value="'+esc(existing&&existing.paymentDate?existing.paymentDate:'')+'"></div>'+
       '<div class="field"><label>المشروع</label><select id="f-inv-project"><option value="">— اختر مشروع —</option>'+
         projects.map(function(p){ return '<option value="'+esc(p.id)+'"'+(existing&&existing.projectId===p.id?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('')+
