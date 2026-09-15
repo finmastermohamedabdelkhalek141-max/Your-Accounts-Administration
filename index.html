@@ -1729,6 +1729,7 @@ function renderInvoices(){
       (canReports?('<button class="btn btn-outline btn-sm" onclick="exportScreenPDF(\'invoices\')">تصدير PDF</button>'+
       '<button class="btn btn-outline btn-sm" onclick="exportScreenWord(\'invoices\')">تصدير Word</button>'):'')+
       (canAdd?'<button class="btn btn-outline btn-sm" id="ai-invoice-read-btn" onclick="triggerAIInvoiceRead()">📷 قراءة فاتورة بالذكاء الاصطناعي</button>':'')+
+      (canAdd?'<button class="btn btn-outline btn-sm" onclick="setAIApiKey()" title="مفتاح Anthropic API">🔑 مفتاح API</button>':'')+
       (canAdd?'<button class="btn btn-gold btn-sm" onclick="openInvoiceModal()">+ مستند جديد</button>':'')+
     '</div></div><div class="panel-body table-wrap">'+invoicesTableHtml(rows)+'</div></div>';
 }
@@ -1740,6 +1741,17 @@ function deleteInvoice(id){
 }
 /* ===================== قارئ الفواتير بالذكاء الاصطناعي ===================== */
 var AI_INVOICE_MODEL = 'claude-sonnet-4-6';
+var AI_API_KEY_STORAGE = 'binArhab_anthropic_api_key';
+function getAIApiKey(){ return (localStorage.getItem(AI_API_KEY_STORAGE)||'').trim(); }
+function setAIApiKey(){
+  var current = getAIApiKey();
+  var val = prompt('الصق مفتاح Anthropic API الخاص بشركتكم (تقدر تحصل عليه من console.anthropic.com):', current);
+  if(val===null) return;
+  val = val.trim();
+  if(!val){ localStorage.removeItem(AI_API_KEY_STORAGE); toast('تم مسح المفتاح'); return; }
+  localStorage.setItem(AI_API_KEY_STORAGE, val);
+  toast('تم حفظ مفتاح API بنجاح');
+}
 function setAIInvoiceBtnBusy(busy){
   var btn = document.getElementById('ai-invoice-read-btn');
   if(!btn) return;
@@ -1748,6 +1760,11 @@ function setAIInvoiceBtnBusy(busy){
 }
 function triggerAIInvoiceRead(){
   if(!hasAdd('invoices')){ toast('لا تملك صلاحية إضافة فواتير','err'); return; }
+  if(!getAIApiKey()){
+    toast('يرجى إدخال مفتاح Anthropic API أولاً من زر "🔑 مفتاح API"','warn');
+    setAIApiKey();
+    if(!getAIApiKey()) return;
+  }
   var input = document.getElementById('ai-invoice-file-input');
   if(input){ input.value = ''; input.click(); }
 }
@@ -1777,14 +1794,25 @@ function handleAIInvoiceFile(e){
   }).catch(function(err){
     setAIInvoiceBtnBusy(false);
     console.error(err);
-    toast('حدث خطأ أثناء قراءة الفاتورة، حاول مرة أخرى','err');
+    if(err && err.message==='no-api-key'){
+      toast('يرجى إدخال مفتاح Anthropic API أولاً','err');
+    } else {
+      toast('حدث خطأ أثناء قراءة الفاتورة: '+((err&&err.message)||'خطأ غير معروف'),'err');
+    }
   });
 }
 function callAIInvoiceExtractor(base64, mediaType, isPdf){
+  var apiKey = getAIApiKey();
+  if(!apiKey){ return Promise.reject(new Error('no-api-key')); }
   var systemPrompt = 'أنت مساعد متخصص في استخراج بيانات الفواتير. اقرأ الفاتورة المرفقة (قد تكون بالعربية أو الإنجليزية) واستخرج البيانات بدقة شديدة. أعد الرد بصيغة JSON صِرف فقط، بدون أي نص إضافي أو شرح أو علامات Markdown، وفق الشكل التالي بالضبط:\n{"supplierName":"","supplierPhone":"","supplierTaxNumber":"","invoiceNumber":"","invoiceDate":"YYYY-MM-DD","items":[{"name":"","qty":0,"price":0}],"subtotal":0,"discount":0,"taxRate":0,"taxTotal":0,"total":0}\nملاحظات: الحقول الرقمية أرقام فقط (استخدم 0 إن لم تجدها). التاريخ بصيغة YYYY-MM-DD وإن لم يوجد اترك السلسلة فارغة. الرقم الضريبي أرقام فقط بدون بادئة OM أو أي رمز. سعر الصنف (price) هو سعر الوحدة وليس إجمالي السطر. إن لم يوجد حقل نصي اتركه فارغًا. لا تُضف أي حقول أخرى غير المذكورة.';
   return fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
     body: JSON.stringify({
       model: AI_INVOICE_MODEL,
       max_tokens: 1500,
@@ -1797,7 +1825,15 @@ function callAIInvoiceExtractor(base64, mediaType, isPdf){
         ]
       }]
     })
-  }).then(function(res){ return res.json(); }).then(function(data){
+  }).then(function(res){
+    return res.json().then(function(data){
+      if(!res.ok){
+        var msg = (data && data.error && data.error.message) ? data.error.message : ('HTTP '+res.status);
+        throw new Error(msg);
+      }
+      return data;
+    });
+  }).then(function(data){
     var text = ((data && data.content) || []).map(function(b){ return b.type==='text'?b.text:''; }).join('\n').trim();
     text = text.replace(/```json/gi,'').replace(/```/g,'').trim();
     try { return JSON.parse(text); } catch(err){ console.error('AI invoice JSON parse failed', text, err); return null; }
