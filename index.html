@@ -875,6 +875,23 @@ function loadState(){
   if(!s.itemProjects) s.itemProjects = [];
   if(!s.itemTabsData) s.itemTabsData = {};
   if(!s.itemStatuses) s.itemStatuses = {};
+  // توحيد قوائم المشاريع (مرة واحدة فقط): أي مشروع كان اتضاف قبل كده من شاشة "تبويب
+  // البنود" فقط (ومش موجود في شاشة "المشاريع" العامة) بيتحول تلقائيًا لمشروع حقيقي هناك،
+  // وبنوده (مراحله/أعمدته) بتتربط بنفس رقم المشروع الجديد بدل ما تفضل قائمة منفصلة
+  // ومربوطة بالاسم بس (وده كان سبب اختفاء البنود لو الاسمين ما اتطابقوش حرفيًا).
+  (s.itemProjects||[]).forEach(function(ip){
+    var nm = (ip.name||'').trim();
+    if(!nm) return;
+    var mp = s.projects.find(function(p){ return (p.name||'').trim()===nm; });
+    if(!mp){
+      mp = {id: ip.id, name: nm, client:'', notes:''};
+      if(s.projects.some(function(p){ return p.id===mp.id; })) mp.id = 'ip_'+ip.id;
+      s.projects.push(mp);
+    }
+    if(s.itemTabsData[ip.id] && !s.itemTabsData[mp.id]){
+      s.itemTabsData[mp.id] = s.itemTabsData[ip.id];
+    }
+  });
   if(!s.settings) s.settings = {};
   if(!s.settings.kiosk) s.settings.kiosk = { requireLocation:false, lat:null, lng:null, radius:150, threshold:0.5 };
   if(!s.settings.payroll) s.settings.payroll = { officialCheckIn:'08:00', officialCheckOut:'17:00', breakMinutes:60, graceMinutes:15, workDaysPerMonth:30 };
@@ -1219,23 +1236,23 @@ var STANDARD_ITEM_COLUMNS = [
   {id:'std_finishes', label:'التشطيبات'}
 ];
 function ensureItemProjectSeed(){
-  if(STATE.itemProjects.length===0){
-    STATE.itemProjects.push({id:'p1', name:'مشروع جديد'});
-    STATE.itemTabsData['p1'] = { mode:'standard', customColumns:[{id:'c1',label:'عمود 1'},{id:'c2',label:'عمود 2'}], stages:[] };
+  if(STATE.projects.length===0){
+    STATE.projects.push({id:'p1', name:'مشروع جديد', client:'', notes:''});
   }
+  STATE.projects.forEach(function(p){ getItemTabsData(p.id); });
 }
 function addItemProject(){
   var input = document.getElementById('it-new-project');
   var name = input.value.trim();
   if(!name){ toast('أدخل اسم المشروع','err'); return; }
   var id = uid();
-  STATE.itemProjects.push({id:id, name:name});
-  STATE.itemTabsData[id] = { mode:'standard', customColumns:[{id:uid(),label:'عمود 1'},{id:uid(),label:'عمود 2'}], stages:[] };
+  STATE.projects.push({id:id, name:name, client:'', notes:''});
+  getItemTabsData(id);
   input.value='';
   saveState();
   renderItemTabsProjectSelect(id);
   renderItemTabs();
-  toast('تمت إضافة المشروع');
+  toast('تمت إضافة المشروع وربطها تلقائيًا بشاشة المشاريع العامة');
 }
 function currentItemProjectId(){
   var sel = document.getElementById('it-project');
@@ -1251,36 +1268,36 @@ function ensureItemTabsDataShape(data){
   if(!data.stages) data.stages = [];
   return data;
 }
+/* بيرجع بيانات تبويب البنود الخاصة بمشروع معيّن (نفس رقم المشروع الموجود في شاشة
+   "المشاريع" العامة مباشرة — بقت قائمة واحدة موحّدة)، وبينشئها فورًا لو مش موجودة
+   بدل ما ترجع فاضية أو تسبب خطأ صامت. */
+function getItemTabsData(pid){
+  if(!pid) return null;
+  if(!STATE.itemTabsData[pid]) STATE.itemTabsData[pid] = {};
+  return ensureItemTabsDataShape(STATE.itemTabsData[pid]);
+}
 function itemTabsActiveColumns(data){
   return data.mode==='custom' ? data.customColumns : STANDARD_ITEM_COLUMNS;
 }
-function matchItemProjectId(mainProjectId){
-  var mp = (STATE.projects||[]).find(function(p){ return p.id===mainProjectId; });
-  if(!mp || !(mp.name||'').trim()) return null;
-  var nm = mp.name.trim();
-  var ip = (STATE.itemProjects||[]).find(function(p){ return (p.name||'').trim()===nm; });
-  return ip ? ip.id : null;
-}
 function setItemTabsMode(mode){
   var pid = currentItemProjectId(); if(!pid) return;
-  ensureItemTabsDataShape(STATE.itemTabsData[pid]);
-  STATE.itemTabsData[pid].mode = mode;
+  getItemTabsData(pid).mode = mode;
   saveState(); renderItemTabs();
 }
 function renderItemTabsProjectSelect(selectId){
   var sel = document.getElementById('it-project');
   if(!sel) return;
-  var current = selectId || sel.value || (STATE.itemProjects[0] && STATE.itemProjects[0].id);
-  sel.innerHTML = STATE.itemProjects.map(function(p){ return '<option value="'+p.id+'"'+(p.id===current?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('');
+  var current = selectId || sel.value || (STATE.projects[0] && STATE.projects[0].id);
+  sel.innerHTML = STATE.projects.map(function(p){ return '<option value="'+p.id+'"'+(p.id===current?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('');
 }
 function openStageNameModal(pid, stageId){
-  ensureItemTabsDataShape(STATE.itemTabsData[pid]);
-  var existing = stageId ? STATE.itemTabsData[pid].stages.find(function(s){ return s.id===stageId; }) : null;
+  var seed = getItemTabsData(pid);
+  var existing = stageId ? seed.stages.find(function(s){ return s.id===stageId; }) : null;
   var body = '<div class="field"><label>اسم المرحلة</label><input id="f-stage-name" value="'+esc(existing?existing.name:'')+'" placeholder="مثال: تأسيس"></div>';
   openModal(existing?'تعديل اسم المرحلة':'مرحلة جديدة', body, function(){
     var name = document.getElementById('f-stage-name').value.trim();
     if(!name){ toast('أدخل اسم المرحلة','err'); return false; }
-    var data = ensureItemTabsDataShape(STATE.itemTabsData[pid]);
+    var data = getItemTabsData(pid);
     if(existing){
       existing.name = name;
     } else {
@@ -1300,13 +1317,13 @@ function addItemStage(){
 }
 function editItemStageName(pid, stageId){
   if(!hasEdit('itemTabs')){ toast('لا تملك صلاحية التعديل','err'); return; }
-  ensureItemTabsDataShape(STATE.itemTabsData[pid]);
+  getItemTabsData(pid);
   openStageNameModal(pid, stageId);
 }
 function deleteItemStage(pid, stageId){
   if(!hasDelete('itemTabs')){ toast('لا تملك صلاحية الحذف','err'); return; }
   if(!confirm('حذف هذه المرحلة؟')) return;
-  var data = ensureItemTabsDataShape(STATE.itemTabsData[pid]);
+  var data = getItemTabsData(pid);
   data.stages = data.stages.filter(function(s){ return s.id!==stageId; });
   saveState(); renderItemTabs();
 }
@@ -1315,7 +1332,7 @@ function addItemColumn(){
   var pid = currentItemProjectId(); if(!pid) return;
   var label = prompt('اسم العمود الجديد؟');
   if(!label) return;
-  var data = ensureItemTabsDataShape(STATE.itemTabsData[pid]);
+  var data = getItemTabsData(pid);
   var colId = uid();
   data.customColumns.push({id:colId, label:label.trim()});
   data.stages.forEach(function(s){ s.bands[colId] = []; });
@@ -1324,7 +1341,7 @@ function addItemColumn(){
 function deleteItemColumn(pid, colId){
   if(!hasDelete('itemTabs')){ toast('لا تملك صلاحية الحذف','err'); return; }
   if(!confirm('حذف هذا العمود؟')) return;
-  var data = ensureItemTabsDataShape(STATE.itemTabsData[pid]);
+  var data = getItemTabsData(pid);
   data.customColumns = data.customColumns.filter(function(c){ return c.id!==colId; });
   data.stages.forEach(function(s){ delete s.bands[colId]; });
   saveState(); renderItemTabs();
@@ -1333,7 +1350,7 @@ function addItemBand(pid, stageId, colId, inputEl){
   if(!hasAdd('itemTabs')){ toast('لا تملك صلاحية الإضافة','err'); return; }
   var text = inputEl.value.trim();
   if(!text) return;
-  var data = ensureItemTabsDataShape(STATE.itemTabsData[pid]);
+  var data = getItemTabsData(pid);
   var stage = data.stages.find(function(s){ return s.id===stageId; });
   if(!stage) return;
   if(!stage.bands[colId]) stage.bands[colId]=[];
@@ -1343,7 +1360,7 @@ function addItemBand(pid, stageId, colId, inputEl){
 }
 function deleteItemBand(pid, stageId, colId, idx){
   if(!hasDelete('itemTabs')){ toast('لا تملك صلاحية الحذف','err'); return; }
-  var data = ensureItemTabsDataShape(STATE.itemTabsData[pid]);
+  var data = getItemTabsData(pid);
   var stage = data.stages.find(function(s){ return s.id===stageId; });
   if(!stage || !stage.bands[colId]) return;
   stage.bands[colId].splice(idx,1);
@@ -1353,10 +1370,9 @@ function renderItemTabs(){
   ensureItemProjectSeed();
   renderItemTabsProjectSelect();
   var pid = currentItemProjectId();
-  var data = STATE.itemTabsData[pid];
+  var data = pid ? getItemTabsData(pid) : null;
   var grid = document.getElementById('it-grid');
   if(!data){ grid.innerHTML=''; return; }
-  ensureItemTabsDataShape(data);
   var canAdd = hasAdd('itemTabs');
   var canEdit = hasEdit('itemTabs');
   var canDelete = hasDelete('itemTabs');
@@ -2039,8 +2055,7 @@ function openInvoiceModal(id, aiPrefill){
     var pel = document.getElementById('f-inv-project');
     var pid = pel ? pel.value : '';
     if(!pid) return null;
-    var ipid = matchItemProjectId(pid);
-    return ipid ? STATE.itemTabsData[ipid] : null;
+    return getItemTabsData(pid);
   }
   function bandToolsHtml(row, idx){
     var data = currentItemTabsData();
@@ -3305,7 +3320,7 @@ var REPORT_META = {
   }},
   itemTabs: { title:'تقرير تبويب البنود', rowsFn:function(){
     var rows = [];
-    STATE.itemProjects.forEach(function(p){ var data=STATE.itemTabsData[p.id]; if(!data) return; var cols=itemTabsActiveColumns(data); data.stages.forEach(function(s){ cols.forEach(function(c){ (s.bands[c.id]||[]).forEach(function(b){ rows.push({'المشروع':p.name,'المرحلة':s.name,'العمود':c.label,'البند':b}); }); }); }); });
+    STATE.projects.forEach(function(p){ var data=STATE.itemTabsData[p.id]; if(!data) return; var cols=itemTabsActiveColumns(data); data.stages.forEach(function(s){ cols.forEach(function(c){ (s.bands[c.id]||[]).forEach(function(b){ rows.push({'المشروع':p.name,'المرحلة':s.name,'العمود':c.label,'البند':b}); }); }); }); });
     return rows;
   }},
   users: { title:'تقرير المستخدمين والصلاحيات', rowsFn:function(){
